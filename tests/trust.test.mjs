@@ -58,6 +58,14 @@ try {
       "filter.lfs.clean=git-lfs clean -- %f", "protocol.ext.allow=always", "remote.origin.uploadpack=/tmp/evil",
       "submodule.recurse=true", "submodule.s.update=!rm -rf .", "trailer.sign.command=echo hi"]);
     assert.deepEqual(commandsIn(parseConfig("submodule.recurse\nfalse\0")), []);
+    // A boolean is no program only where git reads one; elsewhere `yes` is the program.
+    assert.deepEqual(commandsIn(parseConfig("filter.x.clean\nyes\0pager.log\nfalse\0core.fsmonitor\nfalse\0lfs.extension.foo.clean\nfoo %f\0"
+      + "lfs.customtransfer.t.path\n/tmp/agent\0remote.origin.url\next::sh -c evil\0remote.o2.url\nhttps://example.com/x.git\0")),
+      ["filter.x.clean=yes", "lfs.customtransfer.t.path=/tmp/agent", "lfs.extension.foo.clean=foo %f", "remote.origin.url=ext::sh -c evil"]);
+    // A value holding a newline never reads as two allowed lines.
+    const one = await inspect(async () => ({ code: 0, stdout: "local\0core.sshcommand\na\ncore.pager=b\0" }));
+    const two = await inspect(async () => ({ code: 0, stdout: "local\0core.sshcommand\na\0local\0core.pager\nb\0" }));
+    assert.notEqual(one.fingerprint, two.fingerprint);
     console.log("config lines ok");
   }
 

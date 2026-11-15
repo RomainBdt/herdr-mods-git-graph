@@ -50,7 +50,7 @@ export async function readFiles(exec, cwd, on, allowed) {
 // show), and `git remote` only when the branch has no upstream.
 export async function readRepo(exec, path, on, tags, allowed) {
   const repo = await openRepo(exec, path, on, allowed);
-  if (!repo.root) return { error: "not a git repository" };
+  if (!repo.root) return { error: repo.error || "not a git repository" };
   if (repo.blocked) return repo.blocked.error ? { error: repo.blocked.error } : { untrusted: true, trustKey: repo.key };
   const { git } = repo, plain = (args) => exec("git", args, { cwd: path, on });
   // These two carry READ already.

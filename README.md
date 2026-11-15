@@ -99,7 +99,7 @@ and nothing runs git inside a submodule, whose own config is never checked:
 submodule with only uncommitted edits inside it doesn't count as changed in
 its parent), diffs show a submodule as its commits (`-c diff.submodule=short`),
 and Fetch, Pull and Fetch all don't fetch submodules
-(`--no-recurse-submodules`). A repository's own `submodule.recurse=true` asks
+(`--no-recurse-submodules`), nor does Push push them (`--recurse-submodules=no`). A repository's own `submodule.recurse=true` asks
 for the OK like a command. Fetch all runs no hooks either
 (`-c core.hooksPath=~/.herdr-git-graph/no-hooks`, a folder nothing creates).
 Actions you confirm (commit, merge, checkout, pull, push, Fetch…) run hooks as

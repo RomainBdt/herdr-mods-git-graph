@@ -337,15 +337,16 @@ export function commandsFor(a, v = {}, ctx = {}) {
     case "addTag": return [message ? ["tag", "-a", name, "-m", message, a.hash] : ["tag", name, a.hash]];
     case "renameBranch": return [["branch", "-m", a.name, name]];
     case "deleteBranch": return [["branch", v.force ? "-D" : "-d", a.name]];
-    case "deleteRemoteBranch": return [["push", a.remote, "--delete", a.branch]];
+    // Pushes don't recurse into submodules either (push.recurseSubmodules): their config is never checked.
+    case "deleteRemoteBranch": return [["push", "--recurse-submodules=no", a.remote, "--delete", a.branch]];
     case "deleteTag": return [["tag", "-d", a.name]];
     case "merge": return [["merge", "--no-edit", ...(v.noff ? ["--no-ff"] : []), a.ref]];
     case "rebase": return [["rebase", a.ref]];
     case "cherryPick": return [["cherry-pick", ...(a.merge ? ["-m", "1"] : []), a.hash]];
     case "revert": return [["revert", "--no-edit", ...(a.merge ? ["-m", "1"] : []), a.hash]];
     case "reset": return [["reset", `--${v.mode}`, a.hash]];
-    case "push": return [["push", ...(v.upstream ? ["--set-upstream"] : []), v.remote, a.name]];
-    case "pushTag": return [["push", v.remote, `refs/tags/${a.name}`]];
+    case "push": return [["push", "--recurse-submodules=no", ...(v.upstream ? ["--set-upstream"] : []), v.remote, a.name]];
+    case "pushTag": return [["push", "--recurse-submodules=no", v.remote, `refs/tags/${a.name}`]];
     // The message is -m's own argument, so one starting with "-" stays a message.
     case "commit": return [...(v.all ? [["add", "--all"]] : []), ["commit", "-m", message]];
     // Fast-forward only, as manygit pulls: never a merge or a rebase.

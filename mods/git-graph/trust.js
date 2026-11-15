@@ -3,10 +3,10 @@
 // A .git folder from someone else (a zip, a shared drive) brings its config
 // along, so the panel reads nothing in a repository whose config names one
 // until the person allows it. No herdr imports, so node tests it.
-import { READ } from "./git.js";
 //
 // Only two git calls ever reach a repository before that: `rev-parse
 // --show-toplevel` and `config --list`, which read files and run nothing.
+import { READ } from "./git.js";
 
 // Every config git reads there, each "key\nvalue" record after its scope
 // ("system", "global", "local", "worktree"; what a file includes takes that
@@ -43,24 +43,33 @@ const COMMAND_KEYS = [
   /^credential\.(.+\.)?helper$/,
   /^remote\..+\.(uploadpack|receivepack|vcs)$/,
   /^uploadpack\.packobjectshook$/,
+  // git-lfs (often installed globally) reads these from the repository's config: an
+  // extension runs on its clean filter (git status), a custom transfer agent on a transfer.
+  /^lfs\.extension\..+\.(clean|smudge)$/, /^lfs\.customtransfer\..+\.path$/,
   /^(difftool|mergetool|man|browser)\..+\.(cmd|path)$/, /^web\.browser$/,
   /^sendemail\.(.+\.)?(smtpserver|tocmd|cccmd|headercmd|sendmailcmd)$/,
   // Anything else that says it holds a command (trailer.<x>.command, hook.<x>.command…).
   /(command|cmd)$/,
 ];
-// No program: git's own builtin (fsmonitor = true), a pager switched on or off, or a reset.
-const NO_PROGRAM = /^(|true|false|yes|no|on|off|1|0)$/i;
+// No program: an empty value (a reset), or a boolean where git reads one (fsmonitor = true
+// is git's builtin, pager.<cmd> switches a pager on or off). Elsewhere `yes` or `true`
+// is the program of that name.
+const BOOLEAN_KEYS = /^(core\.fsmonitor|pager\..+)$/;
+const NO_PROGRAM = /^(true|false|yes|no|on|off|1|0)$/i;
+const noProgram = (key, v) => v === "" || (BOOLEAN_KEYS.test(key) && NO_PROGRAM.test(v));
 
 export function commandsIn(entries) {
   const out = [];
   for (const { key, value } of entries) {
     const v = value ?? "";
-    let command = COMMAND_KEYS.some((re) => re.test(key)) && !NO_PROGRAM.test(v.trim());
+    let command = COMMAND_KEYS.some((re) => re.test(key)) && !noProgram(key, v.trim());
     // `!cmd` makes `git submodule update` run cmd.
     if (/^submodule\..+\.update$/.test(key)) command = v.trim().startsWith("!");
     // The ext:: transport runs a command as its "remote"; git refuses it unless a protocol policy allows it.
     if (/^protocol\.(.+\.)?allow$/.test(key)) command = v.trim().toLowerCase() !== "never";
     if (/^url\..+\.(insteadof|pushinsteadof)$/.test(key) && /^url\.(ext|fd)::/.test(key)) command = true;
+    // An ext:: remote itself: a global or system protocol policy may allow it, and that's never checked here.
+    if (/^remote\..+\.(url|pushurl)$/.test(key) && /^\s*ext::/i.test(v)) command = true;
     // Checkout, merge and pull then run git in each submodule, with its own config, never checked.
     if (key === "submodule.recurse") command = truthy(value);
     if (command) out.push(`${key}=${v}`);
@@ -93,20 +102,22 @@ export async function inspect(git) {
   } catch (e) { return { error: String(e?.message ?? e) }; }
   const commands = commandsIn(entries);
   // What the person allows: these exact lines. A new or changed command asks again.
-  return { commands, fingerprint: commands.join("\n") };
+  // JSON keeps a value holding a newline from reading as two lines; none is "".
+  return { commands, fingerprint: commands.length ? JSON.stringify(commands) : "" };
 }
 
 // Where an allowance is kept: the machine and the repository's top folder.
 export const trustKey = (on, root) => `${on ?? ""}|${root}`;
 
 // Opens a repository for reading. allowed(key): the fingerprint the person
-// allowed there, if any. Returns { root: null } outside a repository,
+// allowed there, if any. Returns { root: null, error } outside a repository,
 // { root, key, blocked } when its config names commands not allowed (or can't
 // be read), else { root, key, trusted, git } with git running read-only commands.
 export async function openRepo(exec, cwd, on, allowed) {
   const plain = (args) => exec("git", args, { cwd, on });
   const [top, check] = await Promise.all([plain(["rev-parse", "--show-toplevel"]), inspect(plain)]);
-  if (top.code !== 0) return { root: null };
+  // error: git's last line (dubious ownership, a folder it can't read…), for a Manygit row.
+  if (top.code !== 0) return { root: null, error: (top.stderr ?? "").trim().split("\n").pop() || null };
   const root = top.stdout.trim(), key = trustKey(on, root);
   if (check.error) return { root, key, blocked: { error: check.error, commands: [] } };
   if (check.commands.length && allowed(key) !== check.fingerprint) return { root, key, blocked: check };

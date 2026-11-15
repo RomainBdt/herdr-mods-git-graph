@@ -175,7 +175,8 @@ export class Graph {
         for (const [key, { cwd }] of order) {
           const scope = scopeOf(this);
           const read = await readFolder(exec, cwd, null, { all: this.all, remotes: this.remotes, limit: PAGE, status: false }, allowedOf).catch(() => null);
-          if (read && key !== this.context && !this.seen.has(key) && scope === scopeOf(this)) {
+          // A folder not allowed yet isn't kept: enter() never shows it, and it's checked again next time.
+          if (read && read.state !== "untrusted" && key !== this.context && !this.seen.has(key) && scope === scopeOf(this)) {
             // A folder that isn't a repository may hold some: entering it searches (Manygit).
             keep(this.seen, key, { ...folderState(), state: read.state ?? "ready", ...read, warmed: read.state === "norepo" }, SEEN);
           }
@@ -306,7 +307,8 @@ export class Graph {
       await pool(repos, 8, async (r) => {
         const out = await fetchRepo(exec, r.path, on, allowedOf).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
         if (out.code === 0) this.fetchErrors.delete(r.path);
-        else if (out.skipped) run.skipped++;
+        // Skipped: an older fetch's error would otherwise still show on its row.
+        else if (out.skipped) { run.skipped++; this.fetchErrors.delete(r.path); }
         else { run.failed++; this.fetchErrors.set(r.path, (out.stderr || "git fetch failed").trim().split("\n").pop()); }
         run.done++;
         await this.readStatus(r.path, on, stale, cx);
@@ -899,7 +901,13 @@ export class Graph {
   untrusted(t, mono) {
     const b = this.blocked ?? { commands: [] }, where = tilde(this.root ?? this.cwd, this.on) ?? "This repository";
     // Every line in full, control characters spelled out: what's allowed is exactly what's shown.
-    const visible = (line) => line.replace(/[\x00-\x1f\x7f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
+    // Bidi overrides, zero-width, tag and C1 characters too: none may make a line read as another.
+    const hidden = (n) => n < 0x20 || (n >= 0x7f && n <= 0x9f) || n === 0xad || n === 0x61c || n === 0x180e || (n >= 0x200b && n <= 0x200f)
+      || (n >= 0x2028 && n <= 0x202e) || (n >= 0x2060 && n <= 0x206f) || n === 0xfeff || (n >= 0xfff9 && n <= 0xfffb) || (n >= 0xe0000 && n <= 0xe007f);
+    const visible = (line) => [...line].map((c) => {
+      const n = c.codePointAt(0);
+      return !hidden(n) ? c : n <= 0xff ? `\\x${n.toString(16).padStart(2, "0")}` : `\\u{${n.toString(16)}}`;
+    }).join("");
     const text = (s) => div().max_w(340).text_center().text_size(12).text_color(t.muted).child(s);
     return v_flex().id("graph-untrusted").flex_1().min_h(0).items_center().justify_center().gap(10).px(28).pb(40).overflow_y_scrollbar()
       .child(div().size(46).rounded(12).bg(t.raised).border_1().border_color(t.border).flex().items_center().justify_center()

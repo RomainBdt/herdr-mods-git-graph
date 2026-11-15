@@ -226,15 +226,16 @@ or `ansi1` when the action or the chosen mode destroys something.
   `core.sshCommand|gitProxy|fsmonitor|editor|pager|askPass`, `gpg.program`,
   `credential.helper`, `remote.*.uploadpack|receivepack|vcs`, `pager.*`,
   `protocol.*allow` other than `never`, `submodule.*.update=!…`,
-  `submodule.recurse=true`, any key ending
-  in `command` or `cmd`, and the like; `true`/`false` and empty values name
-  none) stops the read unless the person allowed exactly those lines for that
+  `submodule.recurse=true`, a `remote.*.url|pushurl` starting `ext::`,
+  git-lfs's `lfs.extension.*.clean|smudge` and `lfs.customtransfer.*.path`,
+  any key ending in `command` or `cmd`, and the like; an empty value names
+  none, nor does `true`/`false` for `core.fsmonitor` and `pager.*`) stops the read unless the person allowed exactly those lines for that
   repository: `shared("git-graph.allowed")`, `{ "<machine>|<root>": "<the
-  lines>" }`. A config git can't read stops it too. In place of the table: a
+  lines, as a JSON array>" }`. A config git can't read stops it too. In place of the table: a
   46px shield in `blocked`, `This repository runs its own commands` at 14px
   semibold, a line saying the graph reads, fetches and changes nothing there,
   every line in full in a `raised` mono box (wrapping, scrolling past 220px,
-  control characters written `\xNN`), `Allow it
+  control characters written `\xNN`, bidi and zero-width ones `\u{NNNN}`), `Allow it
   only if you trust where this .git folder comes from. A new or changed command
   asks again.`, and an `Allow this repository` button (`solid`). Allowing
   stores the lines and makes every copy read again. A config git can't read
