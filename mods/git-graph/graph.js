@@ -194,11 +194,12 @@ export class Graph {
     const todo = new Map();
     for (const p of panes()) {
       if (!p.cwd) continue;
+      // Never run a command on another machine ahead of time: a remote folder is read when it is shown.
+      if (machineOf.get(p.tab)) continue;
       const where = { cwd: p.cwd, on: machineOf.get(p.tab) ?? null };
       todo.set(JSON.stringify(where), where);
     }
-    // Other machines answer slower, and may not answer at all: last.
-    const order = [...todo].filter(([key]) => key !== this.context && !this.seen.has(key)).sort(([, a], [, b]) => (a.on ? 1 : 0) - (b.on ? 1 : 0));
+    const order = [...todo].filter(([key]) => key !== this.context && !this.seen.has(key));
     if (!order.length) return;
     this.warming = true;
     cx.spawn(async () => {
