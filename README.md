@@ -102,7 +102,7 @@ An installed copy never checks for updates and never contacts anything. To
 update, do it by hand from your own copy of this repository:
 
 ```sh
-cd herdr-git-graph && git pull   # or bring your changes in however you keep this copy
+cd path/to/your-copy cd herdr-git-graph && git pull   # or bring your changes in however you keep this copycd herdr-git-graph && git pull   # or bring your changes in however you keep this copy git pull   # or bring your changes in however you keep this copy
 rm -rf ~/.config/herdr-app/mods/git-graph && cp -R mods/git-graph ~/.config/herdr-app/mods/
 ```
 

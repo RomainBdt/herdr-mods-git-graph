@@ -330,7 +330,9 @@ rmSync(base, { recursive: true, force: true });
   mkdirSync(join(ws, "plain/folder"), { recursive: true });
   // On Windows, "find" on the PATH can be System32's find.exe (a text search): use Git's,
   // and stop its runtime from expanding the ".*" pattern into . and ..
-  const gitFind = "C:/Program Files/Git/usr/bin/find.exe", findExe = process.platform === "win32" && existsSync(gitFind) ? gitFind : "find";
+  // Git for Windows' root sits three folders above `git --exec-path` (<root>/mingw64/libexec/git-core).
+  const gitFind = process.platform === "win32" ? join(execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(), "..", "..", "..", "usr", "bin", "find.exe") : "";
+  const findExe = gitFind && existsSync(gitFind) ? gitFind : "find";
   const findOut = (root, depth) => spawnSync(findExe, R.findArgs(root, depth), { encoding: "utf8", env: { ...process.env, MSYS: "noglob", CYGWIN: "noglob" } }).stdout;
   const found = (depth) => R.parseFound(ws, findOut(ws, depth));
   assert.deepEqual(found(3).map((r) => [r.group, r.name]), [["", "a"], ["", "b"], ["group", "c"]], "pruned, hidden and too-deep folders are skipped");
