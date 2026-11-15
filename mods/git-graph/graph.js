@@ -201,9 +201,11 @@ export class Graph {
     cx.spawn(async (cx) => {
       try {
         // A status-only refresh of a repository no longer readable as before reads it all again.
-        const files = full || !this.root || this.state === "untrusted" ? null : await readFiles(exec, this.root, this.on, allowedOf);
+        const status = full || !this.root || this.state === "untrusted" ? null : await readFiles(exec, this.root, this.on, allowedOf);
         if (stale()) return;
-        if (!files) {
+        // What's allowed can change while the rest doesn't: actions check it (ctx.trusted).
+        const trusting = (trusted) => { this.trusted = trusted; if (this.ctx) this.ctx = { ...this.ctx, trusted }; };
+        if (!status) {
           const read = await readFolder(exec, opened ?? cwd, on, { all, remotes, limit }, allowedOf);
           if (stale()) return;
           if (read.state === "norepo") {
@@ -221,13 +223,15 @@ export class Graph {
             return;
           }
           if (!on) this.watch(read.root, context, cx);
+          trusting(read.trusted);
           // A second look that finds nothing new leaves the table as it is.
           const shown = this.state === "ready" || this.state === "empty";
           if (shown && read.signature === this.signature && read.scope === this.scope && sameFiles(read.files, this.files)) return;
           Object.assign(this, read);
         } else {
-          if (sameFiles(files, this.files)) return;
-          this.files = files;
+          trusting(status.trusted);
+          if (sameFiles(status.files, this.files)) return;
+          this.files = status.files;
         }
         this.build();
         if (this.selected === UNCOMMITTED && this.details) this.loadDetails(this.commits[0], cx);
@@ -294,7 +298,8 @@ export class Graph {
   fetchEvery(cx) {
     const ws = this.workspace;
     if (!ws || this.fetchAll?.root === ws.root) return;
-    const repos = ws.repos.filter((r) => fetchable(this.statuses.get(r.path))), on = this.on;
+    // Rows whose config runs commands not allowed yet are skipped (fetchRepo checks every one), and counted.
+    const repos = ws.repos.filter((r) => this.statuses.get(r.path)?.untrusted || fetchable(this.statuses.get(r.path))), on = this.on;
     const run = this.fetchAll = { root: ws.root, done: 0, total: repos.length, failed: 0, skipped: 0 };
     const stale = () => this.workspace?.root !== run.root;
     cx.spawn(async (cx) => {
@@ -533,7 +538,9 @@ export class Graph {
     const repo = await openRepo(exec, this.root, this.on, allowedOf);
     if (repo.git) return repo.git;
     this.refresh(cx);
-    throw new Error("This repository's git config changed and runs commands now. Allow it again to read it.");
+    throw new Error(!repo.root ? "This folder isn't a git repository any more."
+      : repo.blocked.error ? `Can't check this repository's git config: ${repo.blocked.error}`
+      : "This repository's git config changed and runs commands now. Allow it again to read it.");
   }
 
   loadDetails(commit, cx) {
@@ -891,7 +898,8 @@ export class Graph {
   // which ones, and a button to allow them. Nothing is read there until then.
   untrusted(t, mono) {
     const b = this.blocked ?? { commands: [] }, where = tilde(this.root ?? this.cwd, this.on) ?? "This repository";
-    const shown = b.commands.slice(0, 8), more = b.commands.length - shown.length;
+    // Every line in full, control characters spelled out: what's allowed is exactly what's shown.
+    const visible = (line) => line.replace(/[\x00-\x1f\x7f]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`);
     const text = (s) => div().max_w(340).text_center().text_size(12).text_color(t.muted).child(s);
     return v_flex().id("graph-untrusted").flex_1().min_h(0).items_center().justify_center().gap(10).px(28).pb(40).overflow_y_scrollbar()
       .child(div().size(46).rounded(12).bg(t.raised).border_1().border_color(t.border).flex().items_center().justify_center()
@@ -902,10 +910,9 @@ export class Graph {
       .when(!b.error, (e) => e
         .child(div().text_size(14).font_semibold().text_color(t.foreground).child("This repository runs its own commands"))
         .child(text(`${where} has a git config that tells git to run these commands. The graph reads, fetches and changes nothing here until you allow them.`))
-        .child(v_flex().max_w(380).w_full().px(10).py(8).gap(2).rounded(8).bg(t.raised).border_1().border_color(t.border)
-          .font_family(mono).text_size(11).text_color(t.foreground)
-          .children(shown.map((line) => div().w_full().truncate().child(line)))
-          .when(more > 0, (el) => el.child(div().text_color(t.dim).child(`and ${more} more`))))
+        .child(v_flex().id("graph-untrusted-commands").max_w(380).max_h(220).w_full().flex_none().px(10).py(8).gap(4).rounded(8)
+          .overflow_y_scrollbar().bg(t.raised).border_1().border_color(t.border).font_family(mono).text_size(11).text_color(t.foreground)
+          .children(b.commands.map((line) => div().w_full().child(visible(line)))))
         .child(text("Allow it only if you trust where this .git folder comes from. A new or changed command asks again."))
         .child(h_flex().id("graph-allow").mt(4).h(32).px(14).items_center().rounded(8).border_1().border_color(t.solid).bg(t.solid)
           .text_color(t.solid_foreground).text_size(12.5).font_medium().cursor_pointer().hover((st) => st.opacity(0.88))

@@ -37,13 +37,13 @@ export async function readFolder(exec, cwd, on, { all, remotes, limit, status: w
   };
 }
 
-// The uncommitted files alone (a working tree edit), or null when the
-// repository can't be read as before (not one any more, or not allowed now).
+// The uncommitted files alone (a working tree edit) and what's allowed there,
+// or null when the repository can't be read as before (not one any more, or not allowed now).
 export async function readFiles(exec, cwd, on, allowed) {
   const repo = await openRepo(exec, cwd, on, allowed);
   if (!repo.git) return null;
   const status = await repo.git(STATUS);
-  return status.code === 0 ? parseStatus(status.stdout) : [];
+  return { files: status.code === 0 ? parseStatus(status.stdout) : [], trusted: repo.trusted };
 }
 
 // A Manygit row's status: one git call (with the newest tag beside it when tags

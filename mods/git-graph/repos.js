@@ -71,11 +71,12 @@ export function parseRepoStatus(stdout) {
 // configuration still work, but nothing may stop to ask for a login. Git tries
 // askpass before GIT_TERMINAL_PROMPT, so an empty GIT_ASKPASS goes with it.
 // Up to 500 repositories at once, none confirmed one by one: no hooks (a hooks
-// folder that can't exist) and no submodules (their own config is never checked).
-export const FETCH = ["GCM_INTERACTIVE=0", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "git", "-c", "core.hooksPath=/dev/null", "fetch", "--quiet", "--no-recurse-submodules"];
+// folder in the person's home that nothing makes; /dev/null is a folder anyone
+// may create on Windows) and no submodules (their own config is never checked).
+export const NO_HOOKS = "core.hooksPath=~/.herdr-git-graph/no-hooks";
+export const FETCH = ["GCM_INTERACTIVE=0", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "git", "-c", NO_HOOKS, "fetch", "--quiet", "--no-recurse-submodules"];
 // Worth fetching: a repository that has a remote, or isn't read yet.
-// One whose config runs commands not allowed yet isn't (and is checked again right before).
-export const fetchable = (st) => !st?.untrusted && (!st || st.error || Boolean(st.upstream || st.hasRemote));
+export const fetchable = (st) => !st || st.error || Boolean(st.upstream || st.hasRemote);
 
 // A repository's remotes and their URLs, for the row's menu (Push, the web page).
 export const REMOTES = [...READ, "config", "--get-regexp", "^remote\\..*\\.url$"];

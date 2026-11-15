@@ -84,22 +84,26 @@ diff driver, gpg to check signatures in `git log`, `core.sshCommand` on a
 fetch, a credential helper. A `git clone` never copies that config, but a
 `.git` folder from someone else (a zip, a shared drive, a copied folder) brings
 it along. So before reading a repository, the panel reads its config with
-`git config --local --list` (plus `config.worktree` when it's on), which runs
-nothing. If the config names a command, the panel reads, fetches and changes
+`git config --list --show-scope` (keeping `.git/config`, `config.worktree` and
+what they include), which runs nothing. If the config names a command, the panel reads, fetches and changes
 nothing there: it shows the commands instead, with an **Allow this
-repository** button. Allowing keeps exactly those commands for that
+repository** button and every line in full. Allowing keeps exactly those commands for that
 repository (by machine and folder, across restarts); a new or changed command
 asks again. A Manygit row reads `needs your OK` with a shield, has no menu, and
 Fetch all skips it. Once allowed, git runs there as in your terminal.
 
 Some reads are also kept from starting anything wherever they run: `git log`
 checks no signature (`-c log.showSignature=false`), `core.fsmonitor` is off,
-and `git status` and the uncommitted diff don't look inside submodules
-(`--ignore-submodules=dirty`), whose own config is never checked: a submodule
-with only uncommitted edits inside it doesn't count as changed in its parent.
-Fetch all runs no hooks (`-c core.hooksPath=/dev/null`) and doesn't fetch
-submodules. Actions you confirm (commit, merge, checkout, pull, push, Fetch…)
-run hooks as git does in a terminal.
+and nothing runs git inside a submodule, whose own config is never checked:
+`git status` and the uncommitted diff use `--ignore-submodules=dirty` (a
+submodule with only uncommitted edits inside it doesn't count as changed in
+its parent), diffs show a submodule as its commits (`-c diff.submodule=short`),
+and Fetch, Pull and Fetch all don't fetch submodules
+(`--no-recurse-submodules`). A repository's own `submodule.recurse=true` asks
+for the OK like a command. Fetch all runs no hooks either
+(`-c core.hooksPath=~/.herdr-git-graph/no-hooks`, a folder nothing creates).
+Actions you confirm (commit, merge, checkout, pull, push, Fetch…) run hooks as
+git does in a terminal.
 
 The mod makes no network request of its own: it has no update check.
 

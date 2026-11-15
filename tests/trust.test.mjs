@@ -9,8 +9,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { READ, diffArgs } from "../mods/git-graph/git.js";
-import { FETCH } from "../mods/git-graph/repos.js";
+import { READ, diffArgs, fileArgs, commandsFor } from "../mods/git-graph/git.js";
+import { FETCH, NO_HOOKS } from "../mods/git-graph/repos.js";
 import { readFolder, readFiles, readRepo, fetchRepo } from "../mods/git-graph/read.js";
 import { parseConfig, commandsIn, inspect, trustKey } from "../mods/git-graph/trust.js";
 import { executeAction, UNTRUSTED } from "../mods/git-graph/execute.js";
@@ -52,11 +52,12 @@ try {
     const entries = parseConfig("core.bare\0core.sshCommand\nssh -i ~/.ssh/work\0Filter.LFS.clean\ngit-lfs clean -- %f\0core.fsmonitor\ntrue\0"
       + "color.pager\nfalse\0core.pager\nless -R\0protocol.ext.allow\nalways\0protocol.file.allow\nnever\0submodule.s.update\n!rm -rf .\0"
       + "submodule.t.update\ncheckout\0remote.origin.url\nhttps://example.com/x.git\0remote.origin.uploadpack\n/tmp/evil\0diff.pdf.textconv\npdftotext\0"
-      + "trailer.sign.command\necho hi\0credential.helper\n\0user.name\nMe\0");
+      + "trailer.sign.command\necho hi\0credential.helper\n\0user.name\nMe\0submodule.recurse\ntrue\0");
     assert.deepEqual(entries[0], { key: "core.bare", value: null }, "a bare key has no value");
     assert.deepEqual(commandsIn(entries), ["core.pager=less -R", "core.sshcommand=ssh -i ~/.ssh/work", "diff.pdf.textconv=pdftotext",
       "filter.lfs.clean=git-lfs clean -- %f", "protocol.ext.allow=always", "remote.origin.uploadpack=/tmp/evil",
-      "submodule.s.update=!rm -rf .", "trailer.sign.command=echo hi"]);
+      "submodule.recurse=true", "submodule.s.update=!rm -rf .", "trailer.sign.command=echo hi"]);
+    assert.deepEqual(commandsIn(parseConfig("submodule.recurse\nfalse\0")), []);
     console.log("config lines ok");
   }
 
@@ -69,7 +70,7 @@ try {
     const read = await readFolder(exec, normal, null, opts, nobody);
     assert.equal(read.state, undefined); assert.equal(read.base.length, 1); assert.equal(read.trusted, "");
     writeFileSync(join(normal, "a.txt"), "changed");
-    assert.deepEqual((await readFiles(exec, normal, null, nobody)).map((f) => f.path), ["a.txt"]);
+    assert.deepEqual((await readFiles(exec, normal, null, nobody)).files.map((f) => f.path), ["a.txt"]);
     const st = await readRepo(exec, normal, null, false, nobody);
     assert.equal(st.branch, "main"); assert.equal(st.dirty, 1); assert.equal(st.untrusted, undefined);
     sh(normal, "checkout", "-q", "a.txt");
@@ -136,9 +137,18 @@ try {
     const w = trap("worktree"), wt = repoAt("worktree-config");
     writeFileSync(join(wt, ".gitattributes"), "*.txt filter=trap\n"); commit(wt, "a.txt");
     sh(wt, "config", "core.repositoryformatversion", "1"); sh(wt, "config", "extensions.worktreeConfig", "true");
+    // With the extension on and no config.worktree yet (a new linked worktree, sparse checkout):
+    // no command, not an error.
+    const linked = join(base, "linked");
+    sh(wt, "worktree", "add", "-q", linked.replace(/\\/g, "/"));
+    for (const dir of [wt, linked]) {
+      const r = await readFolder(exec, dir, null, opts, nobody);
+      assert.equal(r.state, undefined, r.blocked?.error); assert.equal(r.trusted, "");
+    }
     sh(wt, "config", "--worktree", "filter.trap.clean", w.cmd);
     touch(join(wt, "a.txt"));
     assert.equal((await readFolder(exec, wt, null, opts, nobody)).state, "untrusted", "config.worktree is checked too");
+    assert.equal((await readFolder(exec, linked, null, opts, nobody)).state, undefined, "another worktree's config.worktree isn't this one's");
     assert.ok(!w.ran());
     console.log("include and worktree config ok");
   }
@@ -160,6 +170,22 @@ try {
     plain(parent, [...READ, ...diffArgs({ uncommitted: true }, "sub")]);
     plain(parent, [...READ, "diff", "--no-renames", "--no-ext-diff", "--ignore-submodules=dirty", "--numstat", "HEAD"]);
     assert.ok(!t.ran(), "the parent's reads run no git inside a submodule");
+    // A commit's diff of the submodule: the parent's diff.submodule=diff would run git diff inside it,
+    // with the submodule's own diff.external.
+    const ext = trap("submodule-diff"), extScript = join(base, "ext-trap.sh");
+    writeFileSync(extScript, `#!/bin/sh\ntouch "${ext.marker}"\n`); chmodSync(extScript, 0o755);
+    commit(join(parent, "sub"), "l2.txt"); sh(parent, "add", "sub"); sh(parent, "commit", "-qm", "bump sub");
+    commit(join(parent, "sub"), "l3.txt");
+    sh(parent, "config", "diff.submodule", "diff"); sh(join(parent, "sub"), "config", "diff.external", extScript.replace(/\\/g, "/"));
+    assert.equal((await readFolder(exec, parent, null, opts, nobody)).state, undefined);
+    const bump = { hash: plain(parent, ["rev-parse", "HEAD"]).stdout.trim(), parents: [plain(parent, ["rev-parse", "HEAD~1"]).stdout.trim()] };
+    plain(parent, ["diff", bump.parents[0], bump.hash, "--", "sub"]);
+    assert.ok(ext.ran(), "the submodule diff trap is armed"); ext.clear();
+    for (const args of [diffArgs(bump, "sub"), fileArgs(bump).status, fileArgs(bump).numstat, diffArgs({ uncommitted: true }, "sub")]) plain(parent, [...READ, ...args]);
+    assert.ok(!ext.ran(), "a commit's diff never runs git inside a submodule");
+    // Actions don't fetch submodules either.
+    assert.ok(commandsFor({ type: "fetch" })[0].includes("--no-recurse-submodules"));
+    assert.ok(commandsFor({ type: "pull", upstream: "origin/main" })[0].includes("--no-recurse-submodules"));
     console.log("submodule trap ok");
   }
 
@@ -224,22 +250,30 @@ try {
     assert.equal(out.code, 0, out.stderr);
     assert.equal(plain(repo, ["rev-parse", "origin/main"]).stdout.trim(), plain(remote, ["rev-parse", "HEAD"]).stdout.trim(), "it fetched");
     assert.ok(!t.ran(), "Fetch all runs no hook");
-    assert.ok(FETCH.includes("core.hooksPath=/dev/null") && FETCH.includes("--no-recurse-submodules"));
+    assert.ok(FETCH.includes(NO_HOOKS) && FETCH.includes("--no-recurse-submodules"));
     commit(remote, "c.txt");
     plain(repo, ["fetch", "-q"]);
     assert.ok(t.ran(), "the hook trap is armed: plain git fetch runs it");
     console.log("fetch hook ok");
   }
 
-  // ---- a config git can't read is never taken as clean
+  // ---- a config git can't read is never taken as clean; a missing one has no command
   {
     const repo = repoAt("noconfig");
     commit(repo, "a.txt");
     renameSync(join(repo, ".git", "config"), join(repo, ".git", "config.away"));
-    const read = await readFolder(exec, repo, null, opts, nobody);
-    assert.equal(read.state, "untrusted"); assert.ok(read.blocked.error, "it says why");
-    assert.ok((await readRepo(exec, repo, null, false, nobody)).error);
-    assert.ok(!(await executeAction({ type: "fetch" }, {}, { root: repo, on: null, remotes: [] }, exec)).ok);
+    assert.equal((await readFolder(exec, repo, null, opts, nobody)).state, undefined, "no .git/config: nothing to allow");
+    renameSync(join(repo, ".git", "config.away"), join(repo, ".git", "config"));
+    // A config git fails to read (a broken include, an unreadable file): as git would answer.
+    const failing = async (program, args, o) => (args.includes("--show-scope") ? { code: 128, stdout: "", stderr: "fatal: bad config line 3" } : exec(program, args, o));
+    const read = await readFolder(failing, repo, null, opts, nobody);
+    assert.equal(read.state, "untrusted"); assert.equal(read.blocked.error, "fatal: bad config line 3", "it says why");
+    assert.ok((await readRepo(failing, repo, null, false, nobody)).error);
+    assert.ok(!(await executeAction({ type: "fetch" }, {}, { root: repo, on: null, remotes: [] }, failing)).ok);
+    // A git older than 2.26 (no --show-scope) reads .git/config by name.
+    sh(repo, "config", "core.sshCommand", "ssh -i key");
+    const old = async (program, args, o) => (args.includes("--show-scope") ? { code: 129, stdout: "", stderr: "error: unknown option `show-scope'" } : exec(program, args, o));
+    assert.deepEqual((await inspect((args) => old("git", args, { cwd: repo }))).commands, ["core.sshcommand=ssh -i key"]);
     console.log("unreadable config ok");
   }
   // Outside a repository, nothing is read.

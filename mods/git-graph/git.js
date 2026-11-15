@@ -4,8 +4,10 @@
 
 // Reads write nothing under .git (no index refresh or lock, no fsmonitor
 // cookie), so the folder watch never wakes for the panel's own reads. Nor do
-// they start gpg to check signatures (log.showSignature).
-export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "log.showSignature=false"];
+// they start gpg to check signatures (log.showSignature), nor git in a submodule
+// to diff it (diff.submodule, status.submoduleSummary): see NO_SUBMODULES.
+export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "log.showSignature=false",
+  "-c", "diff.submodule=short", "-c", "status.submoduleSummary=false"];
 // A submodule's own config is never checked (see trust.js), so reads don't look
 // inside one: --ignore-submodules=dirty compares its commit only, and runs no git there.
 export const NO_SUBMODULES = "--ignore-submodules=dirty";
@@ -347,10 +349,11 @@ export function commandsFor(a, v = {}, ctx = {}) {
     // The message is -m's own argument, so one starting with "-" stays a message.
     case "commit": return [...(v.all ? [["add", "--all"]] : []), ["commit", "-m", message]];
     // Fast-forward only, as manygit pulls: never a merge or a rebase.
-    case "pull": return [["pull", "--ff-only", "--quiet"]];
+    // No submodule fetch: a submodule's own config is never checked (trust.js).
+    case "pull": return [["pull", "--ff-only", "--quiet", "--no-recurse-submodules"]];
     case "stash": return [["stash", "push", ...(v.untracked ? ["--include-untracked"] : []), ...(message ? ["-m", message] : [])]];
     case "resetUncommitted": return [["reset", `--${v.mode}`, "HEAD"]];
-    case "fetch": return [["fetch", "--all"]];
+    case "fetch": return [["fetch", "--all", "--no-recurse-submodules"]];
     default: throw new Error("Unknown Git action");
   }
 }

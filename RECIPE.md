@@ -58,7 +58,7 @@ Top to bottom:
   what the row's token asks for first: behind, Pull, Fetch, Push; ahead, Push,
   Fetch, Pull; no upstream, `Push and set upstream…`, Fetch; otherwise Fetch,
   Pull, Push (all need a remote; Pull an upstream). Pull asks first and runs
-  `git pull --ff-only --quiet`; Push is the graph's dialog (remote, set
+  `git pull --ff-only --quiet --no-recurse-submodules`; Push is the graph's dialog (remote, set
   upstream); Fetch runs at once. With uncommitted changes: Commit, Stash, Reset
   uncommitted changes, the graph's dialogs. Last: `Open on <host>` (origin's
   web page: https without credentials, query or fragment, or an scp/ssh URL on its host), Copy
@@ -68,11 +68,13 @@ Top to bottom:
   Fetch all (the fetch arrow and `Fetch all`, `Fetching 3/12…` while it runs)
   fetches every repository with a remote (or not read yet), 8 at a time, as
   manygit does: `env GCM_INTERACTIVE=0 GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= git
-  -c core.hooksPath=/dev/null fetch --quiet --no-recurse-submodules`, so saved
+  -c core.hooksPath=~/.herdr-git-graph/no-hooks fetch --quiet
+  --no-recurse-submodules`, so saved
   credentials and SSH's configuration work but nothing stops to ask for a
   login, and no hook or submodule runs. Each repository's config is checked
   again right before (see **Repositories that run their own commands**): one
-  not allowed is skipped, and the toast says how many were. Each row reads its status again as its fetch ends;
+  not allowed is skipped (rows already reading `needs your OK` included), and
+  the toast says how many were. Each row reads its status again as its fetch ends;
   a failure shows git's last line in `ansi1` where the branch goes and `fetch
   failed` as its token, until a later fetch of it works. It goes on if a
   repository is opened, and ends with a toast (`Fetched 12 repositories`, or
@@ -215,20 +217,24 @@ or `ansi1` when the action or the chosen mode destroys something.
 - **Repositories that run their own commands** (`trust.js`, `read.js`): every
   read of a repository (loading, a status refresh, a Manygit row, a commit's
   details or a diff, Fetch all) first runs, together, `git rev-parse
-  --show-toplevel` and `git config --local --includes --list -z` (and
-  `--worktree` when `extensions.worktreeConfig` is on), which run nothing. A
+  --show-toplevel` and `git config --list --show-scope --includes -z`, keeping
+  the `local` and `worktree` scopes (`.git/config`, `config.worktree` and what
+  they include; a missing file is none), which run nothing; a git older than
+  2.26 reads `--local` and `--worktree` by name instead. A
   config line naming a program (`filter.*.clean|smudge|process`,
   `diff.*.textconv|command`, `diff.external`, `merge.*.driver`,
   `core.sshCommand|gitProxy|fsmonitor|editor|pager|askPass`, `gpg.program`,
   `credential.helper`, `remote.*.uploadpack|receivepack|vcs`, `pager.*`,
-  `protocol.*allow` other than `never`, `submodule.*.update=!…`, any key ending
+  `protocol.*allow` other than `never`, `submodule.*.update=!…`,
+  `submodule.recurse=true`, any key ending
   in `command` or `cmd`, and the like; `true`/`false` and empty values name
   none) stops the read unless the person allowed exactly those lines for that
   repository: `shared("git-graph.allowed")`, `{ "<machine>|<root>": "<the
   lines>" }`. A config git can't read stops it too. In place of the table: a
   46px shield in `blocked`, `This repository runs its own commands` at 14px
   semibold, a line saying the graph reads, fetches and changes nothing there,
-  the lines in a `raised` mono box (at most 8, then `and N more`), `Allow it
+  every line in full in a `raised` mono box (wrapping, scrolling past 220px,
+  control characters written `\xNN`), `Allow it
   only if you trust where this .git folder comes from. A new or changed command
   asks again.`, and an `Allow this repository` button (`solid`). Allowing
   stores the lines and makes every copy read again. A config git can't read
@@ -245,10 +251,11 @@ or `ansi1` when the action or the chosen mode destroys something.
   `for-each-ref refs/heads`, `git remote` and `git status --porcelain=v1 -z
   --no-renames --untracked-files=all --ignore-submodules=dirty`. Reads pass
   `--no-optional-locks -c core.fsmonitor=false -c diff.autoRefreshIndex=false
-  -c log.showSignature=false`, so they write nothing under `.git` and start no
-  gpg. Status and the uncommitted diff don't look inside submodules (a
-  submodule's own config is never checked): one with only edits inside it
-  doesn't count as changed.
+  -c log.showSignature=false -c diff.submodule=short -c
+  status.submoduleSummary=false`, so they write nothing under `.git`, start no
+  gpg and run no git inside a submodule (whose own config is never checked):
+  status and the uncommitted diff don't look inside one, so one with only
+  edits inside it doesn't count as changed.
 - **Staying live**: `watchFolder` on the repository root (and on the main
   checkout's `.git` for a linked worktree). A change to `HEAD`, `packed-refs` or
   anything under `refs/` inside the git folder reloads the history; any other
@@ -294,7 +301,7 @@ or `ansi1` when the action or the chosen mode destroys something.
   free text, given as `-m`'s own argument. Success posts a toast (`Checked out
   fix`); a failure keeps the dialog open with git's last lines (hints dropped),
   or toasts from the menu.
-- **Fetch** runs `git fetch --all` and reloads.
+- **Fetch** runs `git fetch --all --no-recurse-submodules` and reloads.
 - **Copy** writes the clipboard and toasts `Copied`.
 
 ## Built from

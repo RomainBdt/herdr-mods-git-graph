@@ -8,17 +8,27 @@ import { READ } from "./git.js";
 // Only two git calls ever reach a repository before that: `rev-parse
 // --show-toplevel` and `config --list`, which read files and run nothing.
 
-// The repository's own config (.git/config and what it includes), one
-// NUL-terminated "key\nvalue" record each. --worktree adds config.worktree.
-export const CONFIG = ["config", "--local", "--includes", "--list", "-z"];
+// Every config git reads there, each "key\nvalue" record after its scope
+// ("system", "global", "local", "worktree"; what a file includes takes that
+// file's scope). A missing file is skipped. --show-scope needs git 2.26; older
+// gits read .git/config (and config.worktree) by name instead.
+export const CONFIG = ["config", "--list", "--show-scope", "--includes", "-z"];
+const LOCAL_CONFIG = ["config", "--local", "--includes", "--list", "-z"];
 const WORKTREE_CONFIG = ["config", "--worktree", "--includes", "--list", "-z"];
+const OWN = ["local", "worktree"];
 
-export function parseConfig(stdout) {
-  return stdout.split("\0").filter(Boolean).map((rec) => {
-    const nl = rec.indexOf("\n");
-    // A bare key (`[core] bare`, no "=") is true and has no value line.
-    return nl < 0 ? { key: rec.toLowerCase(), value: null } : { key: rec.slice(0, nl).toLowerCase(), value: rec.slice(nl + 1) };
-  });
+const entry = (rec) => {
+  const nl = rec.indexOf("\n");
+  // A bare key (`[core] bare`, no "=") is true and has no value line.
+  return nl < 0 ? { key: rec.toLowerCase(), value: null } : { key: rec.slice(0, nl).toLowerCase(), value: rec.slice(nl + 1) };
+};
+export const parseConfig = (stdout) => stdout.split("\0").filter(Boolean).map(entry);
+
+// --show-scope's output: the repository's own entries only.
+export function parseScoped(stdout) {
+  const fields = stdout.split("\0"), out = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) if (OWN.includes(fields[i])) out.push(entry(fields[i + 1]));
+  return out;
 }
 
 // Keys that name a program git may start. Matched on the lowercased key: git
@@ -51,6 +61,8 @@ export function commandsIn(entries) {
     // The ext:: transport runs a command as its "remote"; git refuses it unless a protocol policy allows it.
     if (/^protocol\.(.+\.)?allow$/.test(key)) command = v.trim().toLowerCase() !== "never";
     if (/^url\..+\.(insteadof|pushinsteadof)$/.test(key) && /^url\.(ext|fd)::/.test(key)) command = true;
+    // Checkout, merge and pull then run git in each submodule, with its own config, never checked.
+    if (key === "submodule.recurse") command = truthy(value);
     if (command) out.push(`${key}=${v}`);
   }
   return [...new Set(out)].sort();
@@ -60,17 +72,25 @@ const truthy = (v) => v === null || /^(true|yes|on|1)$/i.test(v.trim());
 
 // What the repository's config would have git run. git: (args) => exec result,
 // in the repository. A config git can't read is never taken as one without commands.
+const failure = (r) => ({ error: (r.stderr || `git config exited with ${r.code}`).trim().split("\n").pop() });
 export async function inspect(git) {
-  let r;
-  try { r = await git(CONFIG); } catch (e) { return { error: String(e?.message ?? e) }; }
-  if (r.code !== 0) return { error: (r.stderr || `git config exited with ${r.code}`).trim().split("\n").pop() };
-  const entries = parseConfig(r.stdout);
-  if (entries.some((e) => e.key === "extensions.worktreeconfig" && truthy(e.value))) {
-    let w;
-    try { w = await git(WORKTREE_CONFIG); } catch (e) { return { error: String(e?.message ?? e) }; }
-    if (w.code !== 0) return { error: (w.stderr || `git config exited with ${w.code}`).trim().split("\n").pop() };
-    entries.push(...parseConfig(w.stdout));
-  }
+  let entries;
+  try {
+    const r = await git(CONFIG);
+    if (r.code === 0) entries = parseScoped(r.stdout);
+    else if (r.code !== 129) return failure(r);
+    else {
+      // An unknown option: a git older than 2.26.
+      const l = await git(LOCAL_CONFIG);
+      if (l.code !== 0) return failure(l);
+      entries = parseConfig(l.stdout);
+      if (entries.some((e) => e.key === "extensions.worktreeconfig" && truthy(e.value))) {
+        const w = await git(WORKTREE_CONFIG);
+        if (w.code !== 0) return failure(w);
+        entries.push(...parseConfig(w.stdout));
+      }
+    }
+  } catch (e) { return { error: String(e?.message ?? e) }; }
   const commands = commandsIn(entries);
   // What the person allows: these exact lines. A new or changed command asks again.
   return { commands, fingerprint: commands.join("\n") };
