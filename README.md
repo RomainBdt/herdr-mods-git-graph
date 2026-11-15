@@ -83,23 +83,14 @@ folders open in your other spaces are read ahead for their history and branches
 only (`git log`, `rev-parse`, `for-each-ref`, `git remote`), which run no
 command from the repository's config.
 
-The mod itself makes one request of its own: at most once a day it asks GitHub's
-public API for this repository's latest release
-(`api.github.com/repos/rabeeh-ta/herdr-git-graph/releases/latest`), with no
-token and nothing about you or your repositories. See [Updating](#updating) to
-turn it off.
+The mod makes no network request of its own: it has no update check.
 
 ## Install
 
-Ask your Herdr agent: *"add the mod at github.com/rabeeh-ta/herdr-git-graph"*.
-It reads [RECIPE.md](RECIPE.md) and the files, copies `mods/git-graph/` into
-`~/.config/herdr-app/mods/`, and checks it.
-
-Or by hand:
+From your own copy of this repository, copy the mod into Herdr's mods folder:
 
 ```sh
-git clone https://github.com/rabeeh-ta/herdr-git-graph
-cp -R herdr-git-graph/mods/git-graph ~/.config/herdr-app/mods/
+cp -R mods/git-graph ~/.config/herdr-app/mods/
 ```
 
 If you already have a mod called `git-graph`, rename this one's folder, and the
@@ -107,21 +98,15 @@ If you already have a mod called `git-graph`, rename this one's folder, and the
 
 ### Updating
 
-An installed copy doesn't update itself. When a newer release is out, the
-graph's header shows an **Update Graph** dot; click it for what changed. To update,
-ask your Herdr agent: *"Update the git-graph mod from
-github.com/rabeeh-ta/herdr-git-graph"*, or by hand:
+An installed copy never checks for updates and never contacts anything. To
+update, do it by hand from your own copy of this repository:
 
 ```sh
-cd herdr-git-graph && git pull
+cd path/to/your-copy cd herdr-git-graph && git pull   # or bring your changes in however you keep this copycd herdr-git-graph && git pull   # or bring your changes in however you keep this copy git pull   # or bring your changes in however you keep this copy
 rm -rf ~/.config/herdr-app/mods/git-graph && cp -R mods/git-graph ~/.config/herdr-app/mods/
 ```
 
 The top-bar copies below don't need redoing: they open `git-graph` by name.
-
-To stop the daily check, click **Stop checking** in the update window, or set
-`CHECK = false` in `mods/git-graph/update.js` (an update puts it back). Watching
-the repository's releases on GitHub tells you too.
 
 ### Put it in the top bar
 

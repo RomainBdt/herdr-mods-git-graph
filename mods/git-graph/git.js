@@ -7,6 +7,14 @@
 export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
 export const STATUS = ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"];
 export const UNCOMMITTED = "*";
+
+// a > b for versions like v1.2.3.
+export function newer(a, b) {
+  const parts = (v) => String(v).replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  return false;
+}
 // Git's pretty fields are NUL-free strings; -z terminates each seven-field record.
 const FORMAT = "%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s";
 const objectId = (s) => typeof s === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(s);

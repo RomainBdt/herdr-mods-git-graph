@@ -88,7 +88,7 @@ assert.deepEqual(G.parseStatus(" M a.txt\0?? b.txt\0D  c.txt\0UU d.txt\0"), [
 // status still names paths from the root and the log is the whole history.
 {
   const sub = join(repo, "deep", "er");
-  execFileSync("mkdir", ["-p", sub]);
+  mkdirSync(sub, { recursive: true });
   writeFileSync(join(sub, "new.txt"), "x");
   const fromRoot = git(repo, [...G.READ, ...G.STATUS]).stdout, fromSub = git(sub, [...G.READ, ...G.STATUS]).stdout;
   assert.equal(fromSub, fromRoot);
@@ -328,14 +328,25 @@ rmSync(base, { recursive: true, force: true });
   const mk = (rel) => { const d = join(ws, rel); mkdirSync(d, { recursive: true }); sh(d, "init", "-q", "-b", "main"); return d; };
   const a = mk("a"); mk("b"); mk("group/c"); mk("node_modules/pruned"); mk(".hidden/pruned"); mk("one/two/three/deep");
   mkdirSync(join(ws, "plain/folder"), { recursive: true });
-  const found = (depth) => R.parseFound(ws, spawnSync("find", R.findArgs(ws, depth), { encoding: "utf8" }).stdout);
+  // On Windows, "find" on the PATH can be System32's find.exe (a text search): use Git's,
+  // and stop its runtime from expanding the ".*" pattern into . and ..
+  // Git for Windows' root sits three folders above `git --exec-path` (<root>/mingw64/libexec/git-core).
+  const gitFind = process.platform === "win32" ? join(execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(), "..", "..", "..", "usr", "bin", "find.exe") : "";
+  const findExe = gitFind && existsSync(gitFind) ? gitFind : "find";
+  const findOut = (root, depth) => spawnSync(findExe, R.findArgs(root, depth), { encoding: "utf8", env: { ...process.env, MSYS: "noglob", CYGWIN: "noglob" } }).stdout;
+  const found = (depth) => R.parseFound(ws, findOut(ws, depth));
   assert.deepEqual(found(3).map((r) => [r.group, r.name]), [["", "a"], ["", "b"], ["group", "c"]], "pruned, hidden and too-deep folders are skipped");
   assert.deepEqual(found(4).map((r) => r.name), ["a", "b", "c", "deep"], "a deeper search finds more");
   assert.deepEqual(found(1).map((r) => r.name), ["a", "b"]);
   // A folder reached through a symlink (macOS's /tmp, a symlinked checkout) is searched too.
-  const link = `${ws}-link`; symlinkSync(ws, link);
-  assert.deepEqual(R.parseFound(link, spawnSync("find", R.findArgs(link, 3), { encoding: "utf8" }).stdout).map((r) => r.name), ["a", "b", "c"], "symlinked folder");
-  rmSync(link);
+  // (Windows can't make a symlink without privileges: skipped there.)
+  const link = `${ws}-link`;
+  let linked = true;
+  try { symlinkSync(ws, link); } catch (e) { if (e.code !== "EPERM") throw e; linked = false; }
+  if (linked) {
+    assert.deepEqual(R.parseFound(link, findOut(link, 3)).map((r) => r.name), ["a", "b", "c"], "symlinked folder");
+    rmSync(link);
+  }
   // Not searched: a home, anything above one, and another machine's usual homes.
   for (const [dir, home, skip] of [["/", "/Users/me", true], ["/Users", "/Users/me", true], ["/Users/me/", "/Users/me", true],
     ["/Users/me/code", "/Users/me", false], ["/home/dev", null, true], ["/root", null, true], ["/mnt/data/dev-vera", null, false], ["/home/dev/work", null, false]]) {
@@ -368,13 +379,18 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }).kind, "ok", "detached isn't \"not pushed\"");
   // Fetch all's command: prompts off, through env, and a row behind after someone else pushed.
   sh(join(ws, "b"), "remote", "add", "origin", join(ws, "gone.git"));
-  const fetchOut = spawnSync("env", R.FETCH, { cwd: join(ws, "b"), encoding: "utf8", env });
+  // (The leading NAME=value words are what `env` would set: done here, so no `env` program is needed.)
+  const fetchIn = (cwd) => {
+    const gi = R.FETCH.indexOf("git"), vars = Object.fromEntries(R.FETCH.slice(0, gi).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
+    return spawnSync("git", R.FETCH.slice(gi + 1), { cwd, encoding: "utf8", env: { ...env, ...vars } });
+  };
+  const fetchOut = fetchIn(join(ws, "b"));
   assert.ok(fetchOut.status !== 0 && fetchOut.stderr.trim(), "an unreachable remote fails with git's words for the row");
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }, "fatal: unable to access").text, "fetch failed");
   assert.equal(R.fetchable({ upstream: null, hasRemote: false }), false, "a local-only repository isn't fetched");
   assert.equal(R.fetchable(undefined), true); assert.equal(R.fetchable({ upstream: "origin/main" }), true);
   sh(a, "checkout", "-q", "main"); commit(join(other, "c"), "more"); sh(join(other, "c"), "push", "-q");
-  assert.equal(spawnSync("env", R.FETCH, { cwd: a, encoding: "utf8", env }).status, 0);
+  assert.equal(fetchIn(a).status, 0);
   assert.equal(status(a).behind, 2, "the fetch brought the new commit");
   // A row's menu: Herdr's tabs first, then what its ↑/↓ asks for first.
   const remotes = R.parseRemotes(git(a, R.REMOTES).stdout);
