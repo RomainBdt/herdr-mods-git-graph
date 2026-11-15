@@ -3,9 +3,13 @@
 // the menus. Commands are argv arrays, never a shell line.
 
 // Reads write nothing under .git (no index refresh or lock, no fsmonitor
-// cookie), so the folder watch never wakes for the panel's own reads.
-export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
-export const STATUS = ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"];
+// cookie), so the folder watch never wakes for the panel's own reads. Nor do
+// they start gpg to check signatures (log.showSignature).
+export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "log.showSignature=false"];
+// A submodule's own config is never checked (see trust.js), so reads don't look
+// inside one: --ignore-submodules=dirty compares its commit only, and runs no git there.
+export const NO_SUBMODULES = "--ignore-submodules=dirty";
+export const STATUS = ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", NO_SUBMODULES];
 export const UNCOMMITTED = "*";
 
 // a > b for versions like v1.2.3.
@@ -409,7 +413,7 @@ export function joinFiles(statusText, numstatText) {
 export function diffArgs(commit, path) {
   if (!commit.uncommitted) checkCommit(commit);
   const opts = ["--no-color", "--no-ext-diff", "--no-textconv"];
-  if (commit.uncommitted) return ["diff", ...opts, "HEAD", "--", path];
+  if (commit.uncommitted) return ["diff", ...opts, NO_SUBMODULES, "HEAD", "--", path];
   if (!commit.parents.length) return ["show", ...opts, "--format=", commit.hash, "--", path];
   return ["diff", ...opts, commit.parents[0], commit.hash, "--", path];
 }

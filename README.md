@@ -76,12 +76,30 @@ listed repository with a remote, with login prompts off, as manygit does), Pull,
 Push, or delete a remote branch. The mod never runs a shell itself: every git
 call is an argument list, and names you type can't start with `-`.
 
-`git status` runs the clean filters a repository's own `.git/config` defines
-(as it does in your terminal), so it runs only for what the panel shows: the
-focused repository, or the repositories listed under the focused folder. The
-folders open in your other spaces are read ahead for their history and branches
-only (`git log`, `rev-parse`, `for-each-ref`, `git remote`), which run no
-command from the repository's config.
+### Repositories that run their own commands
+
+A repository's own git config (`.git/config`, and what it includes) can tell
+git to run a command by itself: a clean filter on `git status`, a textconv or
+diff driver, gpg to check signatures in `git log`, `core.sshCommand` on a
+fetch, a credential helper. A `git clone` never copies that config, but a
+`.git` folder from someone else (a zip, a shared drive, a copied folder) brings
+it along. So before reading a repository, the panel reads its config with
+`git config --local --list` (plus `config.worktree` when it's on), which runs
+nothing. If the config names a command, the panel reads, fetches and changes
+nothing there: it shows the commands instead, with an **Allow this
+repository** button. Allowing keeps exactly those commands for that
+repository (by machine and folder, across restarts); a new or changed command
+asks again. A Manygit row reads `needs your OK` with a shield, has no menu, and
+Fetch all skips it. Once allowed, git runs there as in your terminal.
+
+Some reads are also kept from starting anything wherever they run: `git log`
+checks no signature (`-c log.showSignature=false`), `core.fsmonitor` is off,
+and `git status` and the uncommitted diff don't look inside submodules
+(`--ignore-submodules=dirty`), whose own config is never checked: a submodule
+with only uncommitted edits inside it doesn't count as changed in its parent.
+Fetch all runs no hooks (`-c core.hooksPath=/dev/null`) and doesn't fetch
+submodules. Actions you confirm (commit, merge, checkout, pull, push, Fetch…)
+run hooks as git does in a terminal.
 
 The mod makes no network request of its own: it has no update check.
 

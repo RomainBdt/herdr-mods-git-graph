@@ -1,7 +1,7 @@
 // Manygit: the repositories under a folder that isn't one itself, after
 // github.com/rabeeh-ta/manygit. Pure functions, so the tests run them against
 // real folders; graph.js does the exec.
-import { READ } from "./git.js";
+import { READ, NO_SUBMODULES } from "./git.js";
 
 export const DEPTH = { min: 1, max: 5, default: 3 };
 // Never descended into: manygit's list, plus every hidden folder and macOS's
@@ -44,7 +44,7 @@ export function parseFound(root, stdout, max = 500) {
 }
 
 // Everything a row shows, in one git call: manygit needs six to eight.
-export const REPO_STATUS = [...READ, "status", "--porcelain=v2", "--branch", "-z", "--no-renames", "--untracked-files=normal"];
+export const REPO_STATUS = [...READ, "status", "--porcelain=v2", "--branch", "-z", "--no-renames", "--untracked-files=normal", NO_SUBMODULES];
 
 export function parseRepoStatus(stdout) {
   // head: HEAD's hash (null before the first commit); staged: changes already in the index.
@@ -70,9 +70,12 @@ export function parseRepoStatus(stdout) {
 // A background fetch, as manygit runs it: saved credentials and SSH's own
 // configuration still work, but nothing may stop to ask for a login. Git tries
 // askpass before GIT_TERMINAL_PROMPT, so an empty GIT_ASKPASS goes with it.
-export const FETCH = ["GCM_INTERACTIVE=0", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "git", "fetch", "--quiet"];
+// Up to 500 repositories at once, none confirmed one by one: no hooks (a hooks
+// folder that can't exist) and no submodules (their own config is never checked).
+export const FETCH = ["GCM_INTERACTIVE=0", "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "git", "-c", "core.hooksPath=/dev/null", "fetch", "--quiet", "--no-recurse-submodules"];
 // Worth fetching: a repository that has a remote, or isn't read yet.
-export const fetchable = (st) => !st || st.error || Boolean(st.upstream || st.hasRemote);
+// One whose config runs commands not allowed yet isn't (and is checked again right before).
+export const fetchable = (st) => !st?.untrusted && (!st || st.error || Boolean(st.upstream || st.hasRemote));
 
 // A repository's remotes and their URLs, for the row's menu (Push, the web page).
 export const REMOTES = [...READ, "config", "--get-regexp", "^remote\\..*\\.url$"];
@@ -102,6 +105,8 @@ export const LATEST_TAG = [...READ, "for-each-ref", "--count=1", "--sort=-creato
 // What a row says of its upstream (manygit's states; drawn in Herdr's colors).
 export function syncOf(st, fetchError) {
   if (!st) return { kind: "loading", text: "…" };
+  // Its git config runs commands not allowed yet (trust.js): nothing else is known.
+  if (st.untrusted) return { kind: "untrusted", text: "needs your OK" };
   if (fetchError) return { kind: "error", text: "fetch failed" };
   if (st.error) return { kind: "error", text: "!" };
   // A detached HEAD has no branch to push: the branch column already says "detached".
