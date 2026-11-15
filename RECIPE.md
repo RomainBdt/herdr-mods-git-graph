@@ -61,7 +61,7 @@ Top to bottom:
   `git pull --ff-only --quiet`; Push is the graph's dialog (remote, set
   upstream); Fetch runs at once. With uncommitted changes: Commit, Stash, Reset
   uncommitted changes, the graph's dialogs. Last: `Open on <host>` (origin's
-  web page: https without credentials, or an scp/ssh URL on its host), Copy
+  web page: https without credentials, query or fragment, or an scp/ssh URL on its host), Copy
   path, Copy branch name. Actions check the row's HEAD and branch as the
   graph's do, and the list reads again after one. A row still loading, or that
   git can't read, has no menu.
@@ -177,7 +177,8 @@ or `ansi1` when the action or the chosen mode destroys something.
   Coming back shows that in the same frame, then reads it again in the background
   and redraws only if something changed (the log, HEAD, branches, remotes or the
   uncommitted files). Like manygit, the folders open in other spaces' panes are
-  read ahead, one at a time, this machine's first: 1.5 s after start, then every
+  read ahead, one at a time, on this machine only (another machine's folder is
+  read when it is shown): 1.5 s after start, then every
   15 s for new ones. Read-ahead leaves out `git status` (it runs the clean
   filters a repository's own config defines): the uncommitted row comes with
   the read when the folder is shown. A commit's details are kept too (the last

@@ -386,6 +386,8 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.webUrl("https://host.com/o/r#frag=secret"), "https://host.com/o/r", "nor a #fragment");
   assert.equal(R.webUrl("https://u:t@host.com/o/r.git?a=1#b"), "https://host.com/o/r", "credentials, query and fragment together");
   assert.equal(R.webUrl("http://intranet.corp/o/r.git?x=1"), "http://intranet.corp/o/r", "plain http stays http");
+  assert.equal(R.webUrl("https://user:p#ss@host.com/o/r.git"), "https://host.com/o/r", "a # in the password isn't a fragment");
+  assert.equal(R.webUrl("https://host.com/o/r?email=a@b.com"), "https://host.com/o/r", "an @ in the query isn't credentials");
   assert.equal(R.webUrl(bare), null); assert.equal(R.webUrl("file:///srv/r.git"), null);
   assert.equal(R.webUrl("https://user:p@ss@host.com/o/r"), "https://host.com/o/r", "a password with @ is dropped whole");
   assert.equal(R.webUrl("ssh://git@host.example:2222/o/r.git"), "https://host.example/o/r", "the ssh port isn't the web's");

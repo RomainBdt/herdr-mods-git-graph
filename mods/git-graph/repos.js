@@ -85,7 +85,8 @@ export function parseRemotes(stdout) {
 // ssh port; ?query and #fragment are dropped too. A host must have a dot, so paths, ssh aliases and `..` have none.
 const HOST = "([a-zA-Z0-9][a-zA-Z0-9-]*(?:\\.[a-zA-Z0-9-]+)+)";
 export function webUrl(url) {
-  url = url.replace(/[?#].*$/s, ""); // a token in ?query or #fragment never reaches the browser
+  // A token in ?query or #fragment never reaches the browser; a ? or # inside the userinfo is the password's, dropped with it below.
+  url = url.replace(/^((?:\w+:\/\/)?[^/]*@)?([^?#]*)[?#].*$/s, "$1$2");
   const tail = "\\/(.+?)(?:\\.git)?\\/?$";
   let m = new RegExp(`^(https?):\\/\\/(?:[^/]*@)?${HOST}(:\\d+)?${tail}`).exec(url);
   if (m) return `${m[1]}://${m[2]}${m[3] ?? ""}/${m[4]}`;

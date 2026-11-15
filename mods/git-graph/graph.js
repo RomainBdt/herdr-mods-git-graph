@@ -196,7 +196,7 @@ export class Graph {
       if (!p.cwd) continue;
       // Never run a command on another machine ahead of time: a remote folder is read when it is shown.
       if (machineOf.get(p.tab)) continue;
-      const where = { cwd: p.cwd, on: machineOf.get(p.tab) ?? null };
+      const where = { cwd: p.cwd, on: null };
       todo.set(JSON.stringify(where), where);
     }
     const order = [...todo].filter(([key]) => key !== this.context && !this.seen.has(key));
@@ -204,9 +204,9 @@ export class Graph {
     this.warming = true;
     cx.spawn(async () => {
       try {
-        for (const [key, { cwd, on }] of order) {
+        for (const [key, { cwd }] of order) {
           const scope = scopeOf(this);
-          const read = await readFolder(cwd, on, { all: this.all, remotes: this.remotes, limit: PAGE, status: false }).catch(() => null);
+          const read = await readFolder(cwd, null, { all: this.all, remotes: this.remotes, limit: PAGE, status: false }).catch(() => null);
           if (read && key !== this.context && !this.seen.has(key) && scope === scopeOf(this)) {
             // A folder that isn't a repository may hold some: entering it searches (Manygit).
             keep(this.seen, key, { ...folderState(), state: read.state ?? "ready", ...read, warmed: read.state === "norepo" }, SEEN);
