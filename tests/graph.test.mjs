@@ -377,7 +377,9 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }).kind, "ok", "detached isn't \"not pushed\"");
   // Fetch all's command: prompts off, through env, and a row behind after someone else pushed.
   sh(join(ws, "b"), "remote", "add", "origin", join(ws, "gone.git"));
-  const fetchOut = spawnSync("env", R.FETCH, { cwd: join(ws, "b"), encoding: "utf8", env });
+  // (The leading NAME=value words are what `env` would set: done here, so no `env` program is needed.)
+  const gi = R.FETCH.indexOf("git"), fetchEnv = Object.fromEntries(R.FETCH.slice(0, gi).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
+  const fetchOut = spawnSync(R.FETCH[gi], R.FETCH.slice(gi + 1), { cwd: join(ws, "b"), encoding: "utf8", env: { ...env, ...fetchEnv } });
   assert.ok(fetchOut.status !== 0 && fetchOut.stderr.trim(), "an unreachable remote fails with git's words for the row");
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }, "fatal: unable to access").text, "fetch failed");
   assert.equal(R.fetchable({ upstream: null, hasRemote: false }), false, "a local-only repository isn't fetched");
