@@ -88,7 +88,7 @@ assert.deepEqual(G.parseStatus(" M a.txt\0?? b.txt\0D  c.txt\0UU d.txt\0"), [
 // status still names paths from the root and the log is the whole history.
 {
   const sub = join(repo, "deep", "er");
-  execFileSync("mkdir", ["-p", sub]);
+  mkdirSync(sub, { recursive: true });
   writeFileSync(join(sub, "new.txt"), "x");
   const fromRoot = git(repo, [...G.READ, ...G.STATUS]).stdout, fromSub = git(sub, [...G.READ, ...G.STATUS]).stdout;
   assert.equal(fromSub, fromRoot);
