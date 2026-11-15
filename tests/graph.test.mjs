@@ -328,14 +328,23 @@ rmSync(base, { recursive: true, force: true });
   const mk = (rel) => { const d = join(ws, rel); mkdirSync(d, { recursive: true }); sh(d, "init", "-q", "-b", "main"); return d; };
   const a = mk("a"); mk("b"); mk("group/c"); mk("node_modules/pruned"); mk(".hidden/pruned"); mk("one/two/three/deep");
   mkdirSync(join(ws, "plain/folder"), { recursive: true });
-  const found = (depth) => R.parseFound(ws, spawnSync("find", R.findArgs(ws, depth), { encoding: "utf8" }).stdout);
+  // On Windows, "find" on the PATH can be System32's find.exe (a text search): use Git's,
+  // and stop its runtime from expanding the ".*" pattern into . and ..
+  const gitFind = "C:/Program Files/Git/usr/bin/find.exe", findExe = process.platform === "win32" && existsSync(gitFind) ? gitFind : "find";
+  const findOut = (root, depth) => spawnSync(findExe, R.findArgs(root, depth), { encoding: "utf8", env: { ...process.env, MSYS: "noglob", CYGWIN: "noglob" } }).stdout;
+  const found = (depth) => R.parseFound(ws, findOut(ws, depth));
   assert.deepEqual(found(3).map((r) => [r.group, r.name]), [["", "a"], ["", "b"], ["group", "c"]], "pruned, hidden and too-deep folders are skipped");
   assert.deepEqual(found(4).map((r) => r.name), ["a", "b", "c", "deep"], "a deeper search finds more");
   assert.deepEqual(found(1).map((r) => r.name), ["a", "b"]);
   // A folder reached through a symlink (macOS's /tmp, a symlinked checkout) is searched too.
-  const link = `${ws}-link`; symlinkSync(ws, link);
-  assert.deepEqual(R.parseFound(link, spawnSync("find", R.findArgs(link, 3), { encoding: "utf8" }).stdout).map((r) => r.name), ["a", "b", "c"], "symlinked folder");
-  rmSync(link);
+  // (Windows can't make a symlink without privileges: skipped there.)
+  const link = `${ws}-link`;
+  let linked = true;
+  try { symlinkSync(ws, link); } catch (e) { if (e.code !== "EPERM") throw e; linked = false; }
+  if (linked) {
+    assert.deepEqual(R.parseFound(link, findOut(link, 3)).map((r) => r.name), ["a", "b", "c"], "symlinked folder");
+    rmSync(link);
+  }
   // Not searched: a home, anything above one, and another machine's usual homes.
   for (const [dir, home, skip] of [["/", "/Users/me", true], ["/Users", "/Users/me", true], ["/Users/me/", "/Users/me", true],
     ["/Users/me/code", "/Users/me", false], ["/home/dev", null, true], ["/root", null, true], ["/mnt/data/dev-vera", null, false], ["/home/dev/work", null, false]]) {
