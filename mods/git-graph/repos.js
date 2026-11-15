@@ -82,9 +82,12 @@ export function parseRemotes(stdout) {
 
 // A remote's page in the browser: http(s) without its credentials, and ssh://
 // or scp-style URLs (git@github.com:owner/repo.git) on their host, without the
-// ssh port. A host must have a dot, so paths, ssh aliases and `..` have none.
+// ssh port; ?query and #fragment are dropped too. A host must have a dot, so paths, ssh aliases and `..` have none.
 const HOST = "([a-zA-Z0-9][a-zA-Z0-9-]*(?:\\.[a-zA-Z0-9-]+)+)";
 export function webUrl(url) {
+  // A token in ?query or #fragment never reaches the browser; a ? or # inside the userinfo is the password's, dropped with it below.
+  const at = /^(?:\w+:\/\/)?[^/]*@/.exec(url)?.[0] ?? "";
+  url = at + url.slice(at.length).replace(/[?#].*$/s, "");
   const tail = "\\/(.+?)(?:\\.git)?\\/?$";
   let m = new RegExp(`^(https?):\\/\\/(?:[^/]*@)?${HOST}(:\\d+)?${tail}`).exec(url);
   if (m) return `${m[1]}://${m[2]}${m[3] ?? ""}/${m[4]}`;
