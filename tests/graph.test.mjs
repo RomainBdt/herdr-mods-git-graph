@@ -378,14 +378,17 @@ rmSync(base, { recursive: true, force: true });
   // Fetch all's command: prompts off, through env, and a row behind after someone else pushed.
   sh(join(ws, "b"), "remote", "add", "origin", join(ws, "gone.git"));
   // (The leading NAME=value words are what `env` would set: done here, so no `env` program is needed.)
-  const gi = R.FETCH.indexOf("git"), fetchEnv = Object.fromEntries(R.FETCH.slice(0, gi).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
-  const fetchOut = spawnSync(R.FETCH[gi], R.FETCH.slice(gi + 1), { cwd: join(ws, "b"), encoding: "utf8", env: { ...env, ...fetchEnv } });
+  const fetchIn = (cwd) => {
+    const gi = R.FETCH.indexOf("git"), vars = Object.fromEntries(R.FETCH.slice(0, gi).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
+    return spawnSync("git", R.FETCH.slice(gi + 1), { cwd, encoding: "utf8", env: { ...env, ...vars } });
+  };
+  const fetchOut = fetchIn(join(ws, "b"));
   assert.ok(fetchOut.status !== 0 && fetchOut.stderr.trim(), "an unreachable remote fails with git's words for the row");
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }, "fatal: unable to access").text, "fetch failed");
   assert.equal(R.fetchable({ upstream: null, hasRemote: false }), false, "a local-only repository isn't fetched");
   assert.equal(R.fetchable(undefined), true); assert.equal(R.fetchable({ upstream: "origin/main" }), true);
   sh(a, "checkout", "-q", "main"); commit(join(other, "c"), "more"); sh(join(other, "c"), "push", "-q");
-  assert.equal(spawnSync("env", R.FETCH, { cwd: a, encoding: "utf8", env }).status, 0);
+  assert.equal(fetchIn(a).status, 0);
   assert.equal(status(a).behind, 2, "the fetch brought the new commit");
   // A row's menu: Herdr's tabs first, then what its ↑/↓ asks for first.
   const remotes = R.parseRemotes(git(a, R.REMOTES).stdout);
