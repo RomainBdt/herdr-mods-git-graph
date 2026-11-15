@@ -86,7 +86,8 @@ export function parseRemotes(stdout) {
 const HOST = "([a-zA-Z0-9][a-zA-Z0-9-]*(?:\\.[a-zA-Z0-9-]+)+)";
 export function webUrl(url) {
   // A token in ?query or #fragment never reaches the browser; a ? or # inside the userinfo is the password's, dropped with it below.
-  url = url.replace(/^((?:\w+:\/\/)?[^/]*@)?([^?#]*)[?#].*$/s, "$1$2");
+  const at = /^(?:\w+:\/\/)?[^/]*@/.exec(url)?.[0] ?? "";
+  url = at + url.slice(at.length).replace(/[?#].*$/s, "");
   const tail = "\\/(.+?)(?:\\.git)?\\/?$";
   let m = new RegExp(`^(https?):\\/\\/(?:[^/]*@)?${HOST}(:\\d+)?${tail}`).exec(url);
   if (m) return `${m[1]}://${m[2]}${m[3] ?? ""}/${m[4]}`;
