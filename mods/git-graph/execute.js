@@ -1,10 +1,18 @@
 // Action execution is separate from the UI so context checks can be tested
 // against disposable repositories. exec has Herdr's (program, argv, options) shape.
 import { READ, commandsFor, gitError } from "./git.js";
+import { inspect } from "./trust.js";
+
+export const UNTRUSTED = "This repository's git config runs commands you haven't allowed. Open it in the graph to see them and allow it.";
 
 export async function executeAction(action, values, ctx, exec) {
   const git = (args) => exec("git", args, { cwd: ctx.root, on: ctx.on });
   const commands = commandsFor(action, values, ctx);
+  // Only in a repository the graph could read: one whose config runs no command,
+  // or exactly the commands the person allowed (ctx.trusted, see trust.js).
+  // Then git runs as in a terminal, hooks and that config included.
+  const check = await inspect(git);
+  if (check.error || (check.commands.length && check.fingerprint !== ctx.trusted)) return { ok: false, message: check.error ? `Can't check this repository's git config: ${check.error}` : UNTRUSTED };
   // A dialog/menu describes this snapshot, not whatever HEAD happens to be
   // when the user confirms it. Fetch does not operate on the current branch.
   if (action.type !== "fetch") {

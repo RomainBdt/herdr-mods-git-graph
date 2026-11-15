@@ -5,11 +5,13 @@ import { div, svg, PathBuilder } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, v_virtual_list } from "gpui-base";
 import { spaces, panes, focused, layout, exec, watchFolder, readTextFile, theme, settings, props, shared, setShared, openOverlay, home, notify, knownAgents, updates } from "herdr";
 import { layoutLanes } from "./lanes.js";
-import { READ, STATUS, UNCOMMITTED, LABEL, logArgs, parseLog, parseStatus, withUncommitted, labelsOf, hitLabel,
+import { READ, NO_SUBMODULES, UNCOMMITTED, LABEL, withUncommitted, labelsOf, hitLabel,
   menuFor, menuHeight, fileArgs, joinFiles, diffArgs, diffRows, newer } from "./git.js";
 import { perform, openDialog, showChanges } from "./act.js";
 import { icon } from "./menu.js";
-import { depthOf, unsearched, findArgs, parseFound, REPO_STATUS, LATEST_TAG, FETCH, REMOTES, fetchable, parseRepoStatus, parseRemotes, webUrl, syncOf } from "./repos.js";
+import { depthOf, unsearched, findArgs, parseFound, REMOTES, fetchable, parseRemotes, webUrl, syncOf } from "./repos.js";
+import { readFolder, readFiles, readRepo, fetchRepo, scopeOf } from "./read.js";
+import { openRepo } from "./trust.js";
 
 // The frame the shown tab's panes are drawn in, so the panel beside them takes the
 // same corner radius; Herdr's own pane mod walks the same one (mods/pane/main.js).
@@ -76,7 +78,6 @@ const tilde = (path, on) => (!on && path?.startsWith(home()) ? "~" + path.slice(
 const brief = (c) => ({ hash: c.hash, subject: c.subject, parents: c.parents });
 const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const sameFiles = (a, b) => a.length === b.length && a.every((f, i) => f.path === b[i].path && f.status === b[i].status);
-const scopeOf = ({ all, remotes }) => `${all} ${remotes}`;
 // Folders kept as they were last read, and commits' details (a commit never changes).
 const SEEN = 24, DETAILS = 200;
 const keep = (map, key, value, max) => { map.delete(key); map.set(key, value); if (map.size > max) map.delete(map.keys().next().value); };
@@ -84,50 +85,19 @@ const keep = (map, key, value, max) => { map.delete(key); map.set(key, value); i
 // What belongs to one folder: a new folder starts from this, and leaving one keeps it.
 // workspace: the repositories under a folder that isn't one (Manygit), their
 // statuses, and the one opened from that list (its graph shows until Back).
+// trustKey, trusted, blocked: see trust.js; blocked holds the commands an untrusted repository's config names.
 const folderState = () => ({
-  state: "loading", root: null, on: null, cwd: null, error: null,
+  state: "loading", root: null, on: null, cwd: null, error: null, trustKey: null, trusted: null, blocked: null,
   workspace: null, statuses: new Map(), opened: null, skipped: false,
   base: [], commits: [], rows: [], lanes: 1, labels: new Map(), index: new Map(), hasMore: false, limit: PAGE, files: [], ctx: null,
   head: null, current: null, branches: [], remoteNames: [], signature: null, scope: null, moreAsked: null,
   selected: null, details: null, diff: null,
 });
 
-// Everything the table shows for a folder, in one round of git calls: each
-// answers from any subfolder, and status names paths from the repository root.
-// status: false leaves the working tree unread. `git status` runs the clean
-// filters a repository's own config defines, so a folder is only read ahead
-// (warm) for its history and refs; its uncommitted row comes when it's shown.
-async function readFolder(cwd, on, { all, remotes, limit, status: withStatus = true }) {
-  const git = (args) => exec("git", [...READ, ...args], { cwd, on });
-  const [top, log, head, current, branches, remoteNames, status] = await Promise.all([
-    // One commit past the page says whether there are more, as Git Graph asks.
-    exec("git", ["rev-parse", "--show-toplevel"], { cwd, on }), git(logArgs({ all, remotes, limit: limit + 1 })),
-    git(["rev-parse", "--verify", "-q", "HEAD"]), git(["symbolic-ref", "-q", "--short", "HEAD"]),
-    git(["for-each-ref", "--format=%(refname)", "refs/heads"]), git(["remote"]), withStatus ? git(STATUS) : null]);
-  if (top.code !== 0) return { state: "norepo", cwd, on };
-  // A log that fails without a HEAD is a repository with no commits yet.
-  if (log.code !== 0 && head.code === 0) throw new Error(log.stderr.trim());
-  const base = log.code === 0 ? parseLog(log.stdout) : [];
-  return {
-    root: top.stdout.trim(), on, cwd, base: base.slice(0, limit), limit, hasMore: base.length > limit,
-    head: head.code === 0 ? head.stdout.trim() : null, current: current.code === 0 ? current.stdout.trim() : null,
-    branches: branches.stdout.split("\n").filter(Boolean).map((r) => r.replace(/^refs\/heads\//, "")),
-    remoteNames: remoteNames.stdout.split("\n").filter(Boolean),
-    files: status?.code === 0 ? parseStatus(status.stdout) : [],
-    signature: [log.stdout, head.stdout, current.stdout, branches.stdout, remoteNames.stdout].join("\0"), scope: scopeOf({ all, remotes }),
-  };
-}
-
-// A row's status: one git call (with the newest tag beside it when tags show),
-// and `git remote` only when the branch has no upstream.
-async function readRepo(path, on, tags) {
-  const [r, tag] = await Promise.all([exec("git", REPO_STATUS, { cwd: path, on }), tags ? exec("git", LATEST_TAG, { cwd: path, on }) : null]);
-  if (r.code !== 0) return { error: (r.stderr || "git status failed").trim().split("\n").pop() };
-  const st = parseRepoStatus(r.stdout);
-  if (tag?.code === 0 && tag.stdout.trim()) st.tag = tag.stdout.trim();
-  if (!st.upstream) st.hasRemote = Boolean((await exec("git", [...READ, "remote"], { cwd: path, on })).stdout.trim());
-  return st;
-}
+// Repositories the person allowed although their git config runs commands
+// (trust.js): the commands they saw, by trustKey. Kept across restarts.
+const ALLOWED = "git-graph.allowed";
+const allowedOf = (key) => shared(ALLOWED)?.[key];
 
 // Runs fn over items, at most `limit` at a time (manygit's 8).
 async function pool(items, limit, fn) {
@@ -204,8 +174,9 @@ export class Graph {
       try {
         for (const [key, { cwd }] of order) {
           const scope = scopeOf(this);
-          const read = await readFolder(cwd, null, { all: this.all, remotes: this.remotes, limit: PAGE, status: false }).catch(() => null);
-          if (read && key !== this.context && !this.seen.has(key) && scope === scopeOf(this)) {
+          const read = await readFolder(exec, cwd, null, { all: this.all, remotes: this.remotes, limit: PAGE, status: false }, allowedOf).catch(() => null);
+          // A folder not allowed yet isn't kept: enter() never shows it, and it's checked again next time.
+          if (read && read.state !== "untrusted" && key !== this.context && !this.seen.has(key) && scope === scopeOf(this)) {
             // A folder that isn't a repository may hold some: entering it searches (Manygit).
             keep(this.seen, key, { ...folderState(), state: read.state ?? "ready", ...read, warmed: read.state === "norepo" }, SEEN);
           }
@@ -230,25 +201,38 @@ export class Graph {
     const stale = () => this.loadSeq !== id || this.key() !== context;
     cx.spawn(async (cx) => {
       try {
-        if (full || !this.root) {
-          const read = await readFolder(opened ?? cwd, on, { all, remotes, limit });
+        // A status-only refresh of a repository no longer readable as before reads it all again.
+        const status = full || !this.root || this.state === "untrusted" ? null : await readFiles(exec, this.root, this.on, allowedOf);
+        if (stale()) return;
+        // What's allowed can change while the rest doesn't: actions check it (ctx.trusted).
+        const trusting = (trusted) => { this.trusted = trusted; if (this.ctx) this.ctx = { ...this.ctx, trusted }; };
+        if (!status) {
+          const read = await readFolder(exec, opened ?? cwd, on, { all, remotes, limit }, allowedOf);
           if (stale()) return;
           if (read.state === "norepo") {
             if (opened) { this.state = "error"; this.error = `${tilde(opened, on)} isn't a git repository any more.`; return; }
             await this.scan(cwd, on, stale, cx, timer); return;
           }
           if (!opened) this.workspace = null;
+          // Its config runs commands not allowed yet: say so, with the Allow button, and read nothing.
+          if (read.state === "untrusted") {
+            const same = this.state === "untrusted" && this.blocked?.fingerprint === read.blocked.fingerprint && this.blocked?.error === read.blocked.error;
+            if (!same) {
+              const { workspace, statuses, opened: o } = this;
+              this.reset(); Object.assign(this, { workspace, statuses, opened: o }, read);
+            }
+            return;
+          }
           if (!on) this.watch(read.root, context, cx);
+          trusting(read.trusted);
           // A second look that finds nothing new leaves the table as it is.
           const shown = this.state === "ready" || this.state === "empty";
           if (shown && read.signature === this.signature && read.scope === this.scope && sameFiles(read.files, this.files)) return;
           Object.assign(this, read);
         } else {
-          const status = await exec("git", [...READ, ...STATUS], { cwd: this.root, on: this.on });
-          if (stale()) return;
-          const files = status.code === 0 ? parseStatus(status.stdout) : [];
-          if (sameFiles(files, this.files)) return;
-          this.files = files;
+          trusting(status.trusted);
+          if (sameFiles(status.files, this.files)) return;
+          this.files = status.files;
         }
         this.build();
         if (this.selected === UNCOMMITTED && this.details) this.loadDetails(this.commits[0], cx);
@@ -284,7 +268,7 @@ export class Graph {
   // on: the machine the list was read on, never whatever the panel shows by the time it runs.
   async readStatus(path, on, stale, cx) {
     if (stale()) return;
-    const st = await readRepo(path, on, tagsShown()).catch((e) => ({ error: String(e?.message ?? e) }));
+    const st = await readRepo(exec, path, on, tagsShown(), allowedOf).catch((e) => ({ error: String(e?.message ?? e) }));
     if (stale() || !this.workspace) return;
     if (JSON.stringify(st) !== JSON.stringify(this.statuses.get(path))) { this.statuses.set(path, st); cx.notify(); }
   }
@@ -315,13 +299,16 @@ export class Graph {
   fetchEvery(cx) {
     const ws = this.workspace;
     if (!ws || this.fetchAll?.root === ws.root) return;
-    const repos = ws.repos.filter((r) => fetchable(this.statuses.get(r.path))), on = this.on;
-    const run = this.fetchAll = { root: ws.root, done: 0, total: repos.length, failed: 0 };
+    // Rows whose config runs commands not allowed yet are skipped (fetchRepo checks every one), and counted.
+    const repos = ws.repos.filter((r) => this.statuses.get(r.path)?.untrusted || fetchable(this.statuses.get(r.path))), on = this.on;
+    const run = this.fetchAll = { root: ws.root, done: 0, total: repos.length, failed: 0, skipped: 0 };
     const stale = () => this.workspace?.root !== run.root;
     cx.spawn(async (cx) => {
       await pool(repos, 8, async (r) => {
-        const out = await exec("env", FETCH, { cwd: r.path, on }).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
+        const out = await fetchRepo(exec, r.path, on, allowedOf).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
         if (out.code === 0) this.fetchErrors.delete(r.path);
+        // Skipped: an older fetch's error would otherwise still show on its row.
+        else if (out.skipped) { run.skipped++; this.fetchErrors.delete(r.path); }
         else { run.failed++; this.fetchErrors.set(r.path, (out.stderr || "git fetch failed").trim().split("\n").pop()); }
         run.done++;
         await this.readStatus(r.path, on, stale, cx);
@@ -329,7 +316,10 @@ export class Graph {
       });
       if (this.fetchAll === run) this.fetchAll = null;
       const repositories = (n) => `${n} ${n === 1 ? "repository" : "repositories"}`;
-      notify(run.failed ? { title: `Fetched ${run.total - run.failed} of ${repositories(run.total)}`, body: "The failed ones show git's error on their row.", level: "warning" }
+      const fetched = run.total - run.failed - run.skipped;
+      const skipped = run.skipped ? `${repositories(run.skipped)} not allowed yet: open one to allow it.` : "";
+      notify(run.failed || run.skipped ? { title: `Fetched ${fetched} of ${repositories(run.total)}`,
+        body: [run.failed ? "The failed ones show git's error on their row." : "", skipped].filter(Boolean).join(" "), level: "warning" }
         : { title: `Fetched ${repositories(run.total)}`, level: "success", timeout: 3000 });
       cx.notify();
     });
@@ -349,7 +339,7 @@ export class Graph {
       const installed = agents.filter((a) => a.installed);
       this.agents.set(where, agents);
       const web = webUrl((remotes.find((x) => x.name === "origin") ?? remotes[0])?.url ?? "");
-      const ctx = { root: r.path, on, current: st?.detached ? null : st?.branch ?? null, head: st?.head ?? null, branches: [], remotes: remotes.map((x) => x.name) };
+      const ctx = { root: r.path, on, current: st?.detached ? null : st?.branch ?? null, head: st?.head ?? null, branches: [], remotes: remotes.map((x) => x.name), trusted: st?.trusted ?? null };
       const target = { kind: "repo", path: r.path, status: st, agents: installed, web };
       openOverlay({ mod: "git-graph", kind: "popup", at: "pointer", width: 268, height: menuHeight(menuFor(target, ctx)), props: { role: "menu", target, ctx } });
       // Ask again in the background, so a newly installed agent shows next time.
@@ -375,7 +365,7 @@ export class Graph {
     this.commits = commits; this.rows = rows; this.lanes = width;
     this.labels = new Map(commits.map((c) => [c.hash, labelsOf(c, this.remotes)]));
     this.index = new Map(commits.map((c, i) => [c.hash, i]));
-    this.ctx = { root: this.root, on: this.on, current: this.current, head: this.head, branches: this.branches, remotes: this.remoteNames };
+    this.ctx = { root: this.root, on: this.on, current: this.current, head: this.head, branches: this.branches, remotes: this.remoteNames, trusted: this.trusted };
     this.state = commits.length ? "ready" : "empty"; this.error = null;
     if (this.selected && !this.index.has(this.selected)) { this.selected = null; this.details = null; this.diff = null; }
   }
@@ -545,15 +535,26 @@ export class Graph {
     cx.notify();
   }
 
+  // The shown repository's git, checked again (trust.js): its config may have changed since.
+  async repoGit(cx) {
+    const repo = await openRepo(exec, this.root, this.on, allowedOf);
+    if (repo.git) return repo.git;
+    this.refresh(cx);
+    throw new Error(!repo.root ? "This folder isn't a git repository any more."
+      : repo.blocked.error ? `Can't check this repository's git config: ${repo.blocked.error}`
+      : "This repository's git config changed and runs commands now. Allow it again to read it.");
+  }
+
   loadDetails(commit, cx) {
-    const hash = commit.hash, git = (args) => exec("git", [...READ, ...args], { cwd: this.root, on: this.on });
+    const hash = commit.hash;
     const key = `${this.on}\0${this.root}\0${hash}`, known = !commit.uncommitted && this.commitDetails.get(key);
     if (known) { this.details = known; return; }
     cx.spawn(async (cx) => {
       try {
         let details;
+        const git = await this.repoGit(cx);
         if (commit.uncommitted) {
-          const numstat = this.head ? await git(["diff", "--no-renames", "--no-ext-diff", "--numstat", "HEAD"]) : { stdout: "" };
+          const numstat = this.head ? await git(["diff", "--no-renames", "--no-ext-diff", NO_SUBMODULES, "--numstat", "HEAD"]) : { stdout: "" };
           const stats = joinFiles(this.files.map((f) => `${f.status}\t${f.path}`).join("\n"), numstat.stdout);
           details = { files: stats.slice(0, 500), more: Math.max(0, stats.length - 500) };
         } else {
@@ -582,7 +583,7 @@ export class Graph {
           rows = text === null || text.includes("\0") ? [{ kind: "", text: "Binary or unreadable file" }]
             : diffRows(`@@ -0,0 +1 @@\n${text.slice(0, 400000).split("\n").slice(0, 3000).map((l) => `+${l}`).join("\n")}`);
         } else {
-          const r = await exec("git", [...READ, ...diffArgs(commit, file.path)], { cwd: this.root, on: this.on });
+          const r = await (await this.repoGit(cx))(diffArgs(commit, file.path));
           if (r.code !== 0) throw new Error(r.stderr.trim());
           rows = diffRows(r.stdout) ?? [{ kind: "", text: file.binary ? "Binary file changed" : "No text changes" }];
         }
@@ -734,15 +735,17 @@ export class Graph {
     const st = this.statuses.get(r.path), fetchError = this.fetchErrors.get(r.path), sync = syncOf(st, fetchError), here = r.path === this.opened;
     // ↑ and ↓ as Herdr's Spaces list draws them (ansi2, ansi1); in sync shows nothing.
     const counts = ["ahead", "behind", "diverged"].includes(sync.kind) && !fetchError;
-    const color = { loading: t.dim, error: t.ansi1, unpushed: t.ansi1, gone: t.ansi1, local: t.dim }[sync.kind];
+    const color = { loading: t.dim, error: t.ansi1, unpushed: t.ansi1, gone: t.ansi1, local: t.dim, untrusted: t.blocked }[sync.kind];
     const label = counts || sync.kind === "ok" ? null : fetchError ? sync.text : { unpushed: "not pushed", error: "error" }[sync.kind] ?? sync.text;
+    // Its config runs commands not allowed yet: nothing more is read; a click opens it to allow it.
+    const untrusted = Boolean(st?.untrusted);
     // A failure (reading it, or its last fetch) shows git's words where the branch goes.
     const problem = st?.error ?? fetchError;
     const branch = st && !problem ? (st.detached ? "detached" : st.branch) : null, tag = !problem && tagsShown() && st?.tag;
     return h_flex().id(`graph-repo-${i}`).h(34).flex_none().pl(indent ? 28 : 14).pr(14).gap(10).items_center().cursor_pointer()
       .when(here, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => { if (here) { this.picking = false; cx.notify(); } else this.open(r.path, cx); })
-      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); if (st && !st.error) this.repoMenu(r, cx); })
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); if (st && !st.error && !st.untrusted) this.repoMenu(r, cx); })
       .child(div().min_w(0).truncate().text_size(11.5).text_color(here ? t.accent : t.foreground).child(r.name))
       .child(h_flex().flex_none().gap(5).items_center().text_size(11.5)
         .when(st?.dirty > 0, (e) => e.child(h_flex().mr(2).gap(4).items_center().text_color(t.blocked)
@@ -756,7 +759,8 @@ export class Graph {
         .child(svg(icon("tag")).size(11).flex_none()).child(div().min_w(0).truncate().text_size(11).child(tag))))
       .when(Boolean(branch), (e) => e.child(h_flex().flex_none().max_w(200).gap(5).items_center().text_color(t.muted)
         .child(svg(icon("branch")).size(12).flex_none()).child(div().min_w(0).truncate().text_size(11).child(branch))))
-      .when(Boolean(problem), (e) => e.child(div().flex_none().max_w(200).truncate().text_size(11).text_color(t.ansi1).child(problem)));
+      .when(Boolean(problem), (e) => e.child(div().flex_none().max_w(200).truncate().text_size(11).text_color(t.ansi1).child(problem)))
+      .when(untrusted, (e) => e.child(svg(icon("shield")).size(12).flex_none().text_color(t.blocked)));
   }
 
 
@@ -882,6 +886,48 @@ export class Graph {
       .child(div().flex_1().min_w(0).truncate().child(text));
   }
 
+  // Allows the shown repository: the commands its config names now, and no others (trust.js).
+  allow(cx) {
+    const b = this.blocked;
+    if (this.state !== "untrusted" || !b || b.error || !this.trustKey) return;
+    setShared(ALLOWED, { ...(shared(ALLOWED) ?? {}), [this.trustKey]: b.fingerprint });
+    // Every copy reads it again (Manygit's rows too); this one at once.
+    this.seenChange = Date.now(); setShared("git-graph.changed", this.seenChange);
+    this.refresh(cx); cx.notify();
+  }
+
+  // In place of the graph when the repository's config runs commands not allowed yet:
+  // which ones, and a button to allow them. Nothing is read there until then.
+  untrusted(t, mono) {
+    const b = this.blocked ?? { commands: [] }, where = tilde(this.root ?? this.cwd, this.on) ?? "This repository";
+    // Every line in full, control characters spelled out: what's allowed is exactly what's shown.
+    // Bidi overrides, zero-width, tag and C1 characters too: none may make a line read as another.
+    const hidden = (n) => n < 0x20 || (n >= 0x7f && n <= 0x9f) || n === 0xad || n === 0x61c || n === 0x180e || (n >= 0x200b && n <= 0x200f)
+      || (n >= 0x2028 && n <= 0x202e) || (n >= 0x2060 && n <= 0x206f) || n === 0xfeff || (n >= 0xfff9 && n <= 0xfffb) || (n >= 0xe0000 && n <= 0xe007f);
+    const visible = (line) => [...line].map((c) => {
+      const n = c.codePointAt(0);
+      return !hidden(n) ? c : n <= 0xff ? `\\x${n.toString(16).padStart(2, "0")}` : `\\u{${n.toString(16)}}`;
+    }).join("");
+    const text = (s) => div().max_w(340).text_center().text_size(12).text_color(t.muted).child(s);
+    return v_flex().id("graph-untrusted").flex_1().min_h(0).items_center().justify_center().gap(10).px(28).pb(40).overflow_y_scrollbar()
+      .child(div().size(46).rounded(12).bg(t.raised).border_1().border_color(t.border).flex().items_center().justify_center()
+        .child(svg(icon("shield")).size(22).text_color(t.blocked)))
+      .when(Boolean(b.error), (e) => e
+        .child(div().text_size(14).font_semibold().text_color(t.foreground).child("Can't check this repository"))
+        .child(text(`${where}: git can't read its config (${b.error}), so the graph reads nothing here.`)))
+      .when(!b.error, (e) => e
+        .child(div().text_size(14).font_semibold().text_color(t.foreground).child("This repository runs its own commands"))
+        .child(text(`${where} has a git config that tells git to run these commands. The graph reads, fetches and changes nothing here until you allow them.`))
+        .child(v_flex().id("graph-untrusted-commands").max_w(380).max_h(220).w_full().flex_none().px(10).py(8).gap(4).rounded(8)
+          .overflow_y_scrollbar().bg(t.raised).border_1().border_color(t.border).font_family(mono).text_size(11).text_color(t.foreground)
+          .children(b.commands.map((line) => div().w_full().child(visible(line)))))
+        .child(text("Allow it only if you trust where this .git folder comes from. A new or changed command asks again."))
+        .child(h_flex().id("graph-allow").mt(4).h(32).px(14).items_center().rounded(8).border_1().border_color(t.solid).bg(t.solid)
+          .text_color(t.solid_foreground).text_size(12.5).font_medium().cursor_pointer().hover((st) => st.opacity(0.88))
+          .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click((_e, cx) => this.allow(cx))
+          .child("Allow this repository")));
+  }
+
   empty(t) {
     const s = this.state, where = tilde(this.cwd, this.on);
     const [glyph, title, body] = s === "nofolder" ? ["folder", "No folder", "Focus a terminal to see the history of the repository it's in."]
@@ -936,6 +982,7 @@ export class Graph {
       .when(Boolean(this.picking && this.workspace && this.opened), (e) => e.child(this.picker(t)))
       .when(ready, (e) => e.child(this.toolbar(t)).child(this.columns(t, this.graphWidth())).child(this.list(t, mono))
         .when(Boolean(this.selected), (el) => el.child(this.detailsPane(t, mono))))
-      .when(!ready && this.state !== "workspace", (e) => e.child(this.empty(t)));
+      .when(this.state === "untrusted", (e) => e.child(this.untrusted(t, mono)))
+      .when(!ready && this.state !== "workspace" && this.state !== "untrusted", (e) => e.child(this.empty(t)));
   }
 }

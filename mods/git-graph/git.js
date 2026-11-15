@@ -3,9 +3,15 @@
 // the menus. Commands are argv arrays, never a shell line.
 
 // Reads write nothing under .git (no index refresh or lock, no fsmonitor
-// cookie), so the folder watch never wakes for the panel's own reads.
-export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
-export const STATUS = ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"];
+// cookie), so the folder watch never wakes for the panel's own reads. Nor do
+// they start gpg to check signatures (log.showSignature), nor git in a submodule
+// to diff it (diff.submodule, status.submoduleSummary): see NO_SUBMODULES.
+export const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "log.showSignature=false",
+  "-c", "diff.submodule=short", "-c", "status.submoduleSummary=false"];
+// A submodule's own config is never checked (see trust.js), so reads don't look
+// inside one: --ignore-submodules=dirty compares its commit only, and runs no git there.
+export const NO_SUBMODULES = "--ignore-submodules=dirty";
+export const STATUS = ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", NO_SUBMODULES];
 export const UNCOMMITTED = "*";
 
 // a > b for versions like v1.2.3.
@@ -331,22 +337,24 @@ export function commandsFor(a, v = {}, ctx = {}) {
     case "addTag": return [message ? ["tag", "-a", name, "-m", message, a.hash] : ["tag", name, a.hash]];
     case "renameBranch": return [["branch", "-m", a.name, name]];
     case "deleteBranch": return [["branch", v.force ? "-D" : "-d", a.name]];
-    case "deleteRemoteBranch": return [["push", a.remote, "--delete", a.branch]];
+    // Pushes don't recurse into submodules either (push.recurseSubmodules): their config is never checked.
+    case "deleteRemoteBranch": return [["push", "--recurse-submodules=no", a.remote, "--delete", a.branch]];
     case "deleteTag": return [["tag", "-d", a.name]];
     case "merge": return [["merge", "--no-edit", ...(v.noff ? ["--no-ff"] : []), a.ref]];
     case "rebase": return [["rebase", a.ref]];
     case "cherryPick": return [["cherry-pick", ...(a.merge ? ["-m", "1"] : []), a.hash]];
     case "revert": return [["revert", "--no-edit", ...(a.merge ? ["-m", "1"] : []), a.hash]];
     case "reset": return [["reset", `--${v.mode}`, a.hash]];
-    case "push": return [["push", ...(v.upstream ? ["--set-upstream"] : []), v.remote, a.name]];
-    case "pushTag": return [["push", v.remote, `refs/tags/${a.name}`]];
+    case "push": return [["push", "--recurse-submodules=no", ...(v.upstream ? ["--set-upstream"] : []), v.remote, a.name]];
+    case "pushTag": return [["push", "--recurse-submodules=no", v.remote, `refs/tags/${a.name}`]];
     // The message is -m's own argument, so one starting with "-" stays a message.
     case "commit": return [...(v.all ? [["add", "--all"]] : []), ["commit", "-m", message]];
     // Fast-forward only, as manygit pulls: never a merge or a rebase.
-    case "pull": return [["pull", "--ff-only", "--quiet"]];
+    // No submodule fetch: a submodule's own config is never checked (trust.js).
+    case "pull": return [["pull", "--ff-only", "--quiet", "--no-recurse-submodules"]];
     case "stash": return [["stash", "push", ...(v.untracked ? ["--include-untracked"] : []), ...(message ? ["-m", message] : [])]];
     case "resetUncommitted": return [["reset", `--${v.mode}`, "HEAD"]];
-    case "fetch": return [["fetch", "--all"]];
+    case "fetch": return [["fetch", "--all", "--no-recurse-submodules"]];
     default: throw new Error("Unknown Git action");
   }
 }
@@ -409,7 +417,7 @@ export function joinFiles(statusText, numstatText) {
 export function diffArgs(commit, path) {
   if (!commit.uncommitted) checkCommit(commit);
   const opts = ["--no-color", "--no-ext-diff", "--no-textconv"];
-  if (commit.uncommitted) return ["diff", ...opts, "HEAD", "--", path];
+  if (commit.uncommitted) return ["diff", ...opts, NO_SUBMODULES, "HEAD", "--", path];
   if (!commit.parents.length) return ["show", ...opts, "--format=", commit.hash, "--", path];
   return ["diff", ...opts, commit.parents[0], commit.hash, "--", path];
 }
