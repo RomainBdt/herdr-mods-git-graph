@@ -18,10 +18,10 @@ export function foldersToWarm(spaces, panes, context, seen) {
   const todo = new Map();
   for (const p of panes) {
     if (!p.cwd || machineOf.get(p.tab)) continue;
-    const where = { cwd: p.cwd, on: null };
-    todo.set(JSON.stringify(where), where);
+    const where = { cwd: p.cwd, on: null }, key = JSON.stringify(where);
+    if (key !== context && !seen.has(key)) todo.set(key, where);
   }
-  return [...todo].filter(([key]) => key !== context && !seen.has(key));
+  return [...todo];
 }
 
 // Everything the table shows for a folder, in one round of git calls: each

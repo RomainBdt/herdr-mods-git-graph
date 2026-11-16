@@ -332,8 +332,9 @@ rmSync(base, { recursive: true, force: true });
   // On Windows, "find" on the PATH can be System32's find.exe (a text search): use Git's,
   // and stop its runtime from expanding the ".*" pattern into . and ..
   // Git for Windows' root sits three folders above `git --exec-path` (<root>/mingw64/libexec/git-core).
+  const gitBin = process.platform === "win32" ? join(execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(), "..", "..", "..", "usr", "bin") : "";
   const gitTool = (name) => {
-    const exe = process.platform === "win32" ? join(execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(), "..", "..", "..", "usr", "bin", `${name}.exe`) : "";
+    const exe = gitBin && join(gitBin, `${name}.exe`);
     return exe && existsSync(exe) ? exe : name;
   };
   const findExe = gitTool("find");
@@ -395,6 +396,7 @@ rmSync(base, { recursive: true, force: true });
   const gi = R.FETCH.indexOf("git");
   const seen = spawnSync(envExe, [...R.FETCH.slice(0, gi), gitTool("sh"), "-c", 'printf "%s|%s|%s" "$GCM_INTERACTIVE" "$GIT_TERMINAL_PROMPT" "${GIT_ASKPASS-unset}"'],
     { encoding: "utf8", env: { ...env, GIT_ASKPASS: "/bin/askpass" } });
+  if (seen.error) throw seen.error;
   assert.equal(seen.stdout, "0|0|", "env sets each variable, and empties GIT_ASKPASS");
   const fetchOut = fetchIn(join(ws, "b"));
   assert.ok(fetchOut.status !== 0 && fetchOut.stderr.trim(), "an unreachable remote fails with git's words for the row");
