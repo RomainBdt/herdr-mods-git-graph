@@ -10,7 +10,7 @@ import { READ, NO_SUBMODULES, UNCOMMITTED, LABEL, withUncommitted, labelsOf, hit
 import { perform, openDialog, showChanges } from "./act.js";
 import { icon } from "./menu.js";
 import { depthOf, unsearched, findArgs, parseFound, REMOTES, fetchable, parseRemotes, webUrl, syncOf } from "./repos.js";
-import { readFolder, readFiles, readRepo, fetchRepo, scopeOf } from "./read.js";
+import { readFolder, readFiles, readRepo, fetchRepo, scopeOf, foldersToWarm } from "./read.js";
 import { openRepo } from "./trust.js";
 
 // The frame the shown tab's panes are drawn in, so the panel beside them takes the
@@ -158,16 +158,7 @@ export class Graph {
   // Like manygit: read the folders open in other spaces ahead, one at a time, so switching to one shows it at once.
   warm(cx) {
     if (this.folder || this.warming) return;
-    const machineOf = new Map(spaces().flatMap((s) => s.tabs.map((tab) => [tab.id, s.machine ?? null])));
-    const todo = new Map();
-    for (const p of panes()) {
-      if (!p.cwd) continue;
-      // Never run a command on another machine ahead of time: a remote folder is read when it is shown.
-      if (machineOf.get(p.tab)) continue;
-      const where = { cwd: p.cwd, on: null };
-      todo.set(JSON.stringify(where), where);
-    }
-    const order = [...todo].filter(([key]) => key !== this.context && !this.seen.has(key));
+    const order = foldersToWarm(spaces(), panes(), this.context, this.seen);
     if (!order.length) return;
     this.warming = true;
     cx.spawn(async () => {

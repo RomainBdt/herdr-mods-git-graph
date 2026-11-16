@@ -65,8 +65,9 @@ export function commandsIn(entries) {
     let command = COMMAND_KEYS.some((re) => re.test(key)) && !noProgram(key, v.trim());
     // `!cmd` makes `git submodule update` run cmd.
     if (/^submodule\..+\.update$/.test(key)) command = v.trim().startsWith("!");
-    // The ext:: transport runs a command as its "remote"; git refuses it unless a protocol policy allows it.
-    if (/^protocol\.(.+\.)?allow$/.test(key)) command = v.trim().toLowerCase() !== "never";
+    // The ext:: transport runs a command as its "remote"; git refuses it unless a protocol policy allows it:
+    // protocol.ext.allow, or protocol.allow as its default. Other protocols (file, https…) start no program.
+    if (/^protocol\.(ext\.)?allow$/.test(key)) command = v.trim().toLowerCase() !== "never";
     if (/^url\..+\.(insteadof|pushinsteadof)$/.test(key) && /^url\.(ext|fd)::/.test(key)) command = true;
     // An ext:: remote itself: a global or system protocol policy may allow it, and that's never checked here.
     if (/^remote\..+\.(url|pushurl)$/.test(key) && /^\s*ext::/i.test(v)) command = true;

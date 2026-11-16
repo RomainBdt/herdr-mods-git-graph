@@ -5,9 +5,10 @@ import * as G from "../mods/git-graph/git.js";
 import { layoutLanes } from "../mods/git-graph/lanes.js";
 import * as R from "../mods/git-graph/repos.js";
 import { executeAction } from "../mods/git-graph/execute.js";
+import { foldersToWarm } from "../mods/git-graph/read.js";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 
@@ -331,22 +332,27 @@ rmSync(base, { recursive: true, force: true });
   // On Windows, "find" on the PATH can be System32's find.exe (a text search): use Git's,
   // and stop its runtime from expanding the ".*" pattern into . and ..
   // Git for Windows' root sits three folders above `git --exec-path` (<root>/mingw64/libexec/git-core).
-  const gitFind = process.platform === "win32" ? join(execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(), "..", "..", "..", "usr", "bin", "find.exe") : "";
-  const findExe = gitFind && existsSync(gitFind) ? gitFind : "find";
+  const gitBin = process.platform === "win32" ? join(execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(), "..", "..", "..", "usr", "bin") : "";
+  const gitTool = (name) => {
+    const exe = gitBin && join(gitBin, `${name}.exe`);
+    return exe && existsSync(exe) ? exe : name;
+  };
+  const findExe = gitTool("find");
   const findOut = (root, depth) => spawnSync(findExe, R.findArgs(root, depth), { encoding: "utf8", env: { ...process.env, MSYS: "noglob", CYGWIN: "noglob" } }).stdout;
   const found = (depth) => R.parseFound(ws, findOut(ws, depth));
   assert.deepEqual(found(3).map((r) => [r.group, r.name]), [["", "a"], ["", "b"], ["group", "c"]], "pruned, hidden and too-deep folders are skipped");
   assert.deepEqual(found(4).map((r) => r.name), ["a", "b", "c", "deep"], "a deeper search finds more");
   assert.deepEqual(found(1).map((r) => r.name), ["a", "b"]);
   // A folder reached through a symlink (macOS's /tmp, a symlinked checkout) is searched too.
-  // (Windows can't make a symlink without privileges: skipped there.)
+  // (Windows makes a symlink only with privileges: a junction, which needs none, stands in there.)
   const link = `${ws}-link`;
   let linked = true;
-  try { symlinkSync(ws, link); } catch (e) { if (e.code !== "EPERM") throw e; linked = false; }
+  try { symlinkSync(ws, link, process.platform === "win32" ? "junction" : "dir"); } catch (e) { if (e.code !== "EPERM") throw e; linked = false; }
   if (linked) {
-    assert.deepEqual(R.parseFound(link, findOut(link, 3)).map((r) => r.name), ["a", "b", "c"], "symlinked folder");
-    rmSync(link);
-  }
+    try { assert.deepEqual(R.parseFound(link, findOut(link, 3)).map((r) => r.name), ["a", "b", "c"], "symlinked folder"); }
+    // unlink removes the link alone, never what it points to.
+    finally { unlinkSync(link); }
+  } else console.log("SKIPPED: symlinked folder search (no permission to make a link here)");
   // Not searched: a home, anything above one, and another machine's usual homes.
   for (const [dir, home, skip] of [["/", "/Users/me", true], ["/Users", "/Users/me", true], ["/Users/me/", "/Users/me", true],
     ["/Users/me/code", "/Users/me", false], ["/home/dev", null, true], ["/root", null, true], ["/mnt/data/dev-vera", null, false], ["/home/dev/work", null, false]]) {
@@ -379,11 +385,19 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }).kind, "ok", "detached isn't \"not pushed\"");
   // Fetch all's command: prompts off, through env, and a row behind after someone else pushed.
   sh(join(ws, "b"), "remote", "add", "origin", join(ws, "gone.git"));
-  // (The leading NAME=value words are what `env` would set: done here, so no `env` program is needed.)
+  // Run as the app runs it: exec("env", FETCH). On Windows (where Manygit doesn't run yet) Git's own env.exe stands in.
+  const envExe = gitTool("env");
   const fetchIn = (cwd) => {
-    const gi = R.FETCH.indexOf("git"), vars = Object.fromEntries(R.FETCH.slice(0, gi).map((w) => [w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]));
-    return spawnSync("git", R.FETCH.slice(gi + 1), { cwd, encoding: "utf8", env: { ...env, ...vars } });
+    const r = spawnSync(envExe, R.FETCH, { cwd, encoding: "utf8", env });
+    if (r.error) throw r.error;
+    return r;
   };
+  // env sets the leading NAME=value words, an empty GIT_ASKPASS included, then runs git.
+  const gi = R.FETCH.indexOf("git");
+  const seen = spawnSync(envExe, [...R.FETCH.slice(0, gi), gitTool("sh"), "-c", 'printf "%s|%s|%s" "$GCM_INTERACTIVE" "$GIT_TERMINAL_PROMPT" "${GIT_ASKPASS-unset}"'],
+    { encoding: "utf8", env: { ...env, GIT_ASKPASS: "/bin/askpass" } });
+  if (seen.error) throw seen.error;
+  assert.equal(seen.stdout, "0|0|", "env sets each variable, and empties GIT_ASKPASS");
   const fetchOut = fetchIn(join(ws, "b"));
   assert.ok(fetchOut.status !== 0 && fetchOut.stderr.trim(), "an unreachable remote fails with git's words for the row");
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }, "fatal: unable to access").text, "fetch failed");
@@ -434,6 +448,18 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.syncOf(undefined).kind, "loading"); assert.equal(R.syncOf({ error: "dubious ownership" }).kind, "error");
   rmSync(ws, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true });
   console.log("manygit ok");
+}
+
+// ---- Reading ahead (warm): only this machine's folders, each once, never the shown or a seen one
+{
+  const spaces = [{ machine: null, tabs: [{ id: "t1" }, { id: "t2" }] }, { machine: "server", tabs: [{ id: "t3" }] }, { tabs: [{ id: "t4" }] }];
+  const panes = [{ tab: "t1", cwd: "/a" }, { tab: "t3", cwd: "/remote" }, { tab: "t2", cwd: "/a" }, { tab: "t2", cwd: null },
+    { tab: "t4", cwd: "/b" }, { tab: "t1", cwd: "/shown" }, { tab: "t1", cwd: "/seen" }, { tab: "t9", cwd: "/c" }];
+  const key = (cwd) => JSON.stringify({ cwd, on: null });
+  const order = foldersToWarm(spaces, panes, key("/shown"), new Map([[key("/seen"), {}]]));
+  assert.deepEqual(order, ["/a", "/b", "/c"].map((cwd) => [key(cwd), { cwd, on: null }]), "another machine's folder is never read ahead");
+  assert.deepEqual(foldersToWarm([{ machine: "server", tabs: [{ id: "t" }] }], [{ tab: "t", cwd: "/x" }], null, new Map()), []);
+  console.log("warm ok");
 }
 
 // Keep the original CI entry point running the action-context regressions too.
