@@ -385,7 +385,7 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.syncOf({ ...status(a), hasRemote: true }).kind, "ok", "detached isn't \"not pushed\"");
   // Fetch all's command: prompts off, through env, and a row behind after someone else pushed.
   sh(join(ws, "b"), "remote", "add", "origin", join(ws, "gone.git"));
-  // Run as the app runs it: exec("env", FETCH). On Windows, Git's own env.exe.
+  // Run as the app runs it: exec("env", FETCH). On Windows (where Manygit doesn't run yet) Git's own env.exe stands in.
   const envExe = gitTool("env");
   const fetchIn = (cwd) => {
     const r = spawnSync(envExe, R.FETCH, { cwd, encoding: "utf8", env });
