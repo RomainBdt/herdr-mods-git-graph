@@ -58,6 +58,10 @@ try {
       "filter.lfs.clean=git-lfs clean -- %f", "protocol.ext.allow=always", "remote.origin.uploadpack=/tmp/evil",
       "submodule.recurse=true", "submodule.s.update=!rm -rf .", "trailer.sign.command=echo hi"]);
     assert.deepEqual(commandsIn(parseConfig("submodule.recurse\nfalse\0")), []);
+    // Only ext:: runs a command: another protocol's policy (a submodule setup's file) is no reason to ask.
+    assert.deepEqual(commandsIn(parseConfig("protocol.file.allow\nalways\0protocol.https.allow\nuser\0protocol.ext.allow\nnever\0")), []);
+    assert.deepEqual(commandsIn(parseConfig("protocol.allow\nalways\0")), ["protocol.allow=always"], "protocol.allow is ext's default");
+    assert.deepEqual(commandsIn(parseConfig("protocol.allow\nnever\0Protocol.EXT.allow\nuser\0")), ["protocol.ext.allow=user"]);
     // A boolean is no program only where git reads one; elsewhere `yes` is the program.
     assert.deepEqual(commandsIn(parseConfig("filter.x.clean\nyes\0pager.log\nfalse\0core.fsmonitor\nfalse\0lfs.extension.foo.clean\nfoo %f\0"
       + "lfs.customtransfer.t.path\n/tmp/agent\0remote.origin.url\next::sh -c evil\0remote.o2.url\nhttps://example.com/x.git\0")),
