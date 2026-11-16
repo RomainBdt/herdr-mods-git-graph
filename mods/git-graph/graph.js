@@ -257,9 +257,10 @@ export class Graph {
   }
 
   // on: the machine the list was read on, never whatever the panel shows by the time it runs.
-  async readStatus(path, on, stale, cx) {
+  // opened: the repository as Fetch all's check just found it (read.js fetchRepo).
+  async readStatus(path, on, stale, cx, opened = null) {
     if (stale()) return;
-    const st = await readRepo(exec, path, on, tagsShown(), allowedOf).catch((e) => ({ error: String(e?.message ?? e) }));
+    const st = await readRepo(exec, path, on, tagsShown(), allowedOf, opened).catch((e) => ({ error: String(e?.message ?? e) }));
     if (stale() || !this.workspace) return;
     if (JSON.stringify(st) !== JSON.stringify(this.statuses.get(path))) { this.statuses.set(path, st); cx.notify(); }
   }
@@ -302,7 +303,7 @@ export class Graph {
         else if (out.skipped) { run.skipped++; this.fetchErrors.delete(r.path); }
         else { run.failed++; this.fetchErrors.set(r.path, (out.stderr || "git fetch failed").trim().split("\n").pop()); }
         run.done++;
-        await this.readStatus(r.path, on, stale, cx);
+        await this.readStatus(r.path, on, stale, cx, out.repo);
         cx.notify();
       });
       if (this.fetchAll === run) this.fetchAll = null;

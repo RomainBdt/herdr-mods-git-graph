@@ -62,9 +62,10 @@ export async function readFiles(exec, cwd, on, allowed) {
 }
 
 // A Manygit row's status: one git call (with the newest tag beside it when tags
-// show), and `git remote` only when the branch has no upstream.
-export async function readRepo(exec, path, on, tags, allowed) {
-  const repo = await openRepo(exec, path, on, allowed);
+// show), and `git remote` only when the branch has no upstream. opened: the
+// repository as fetchRepo just opened it, so Fetch all checks each one once.
+export async function readRepo(exec, path, on, tags, allowed, opened = null) {
+  const repo = opened ?? await openRepo(exec, path, on, allowed);
   if (!repo.root) return { error: repo.error || "not a git repository" };
   if (repo.blocked) return repo.blocked.error ? { error: repo.blocked.error } : { untrusted: true, trustKey: repo.key };
   const { git } = repo, plain = (args) => exec("git", args, { cwd: path, on });
@@ -80,9 +81,10 @@ export async function readRepo(exec, path, on, tags, allowed) {
 
 // One repository's part of Fetch all, checked again right before it runs.
 // skipped: its config names commands not allowed yet, so nothing ran.
+// repo: what the check found, for the readRepo right after (a fetch with hooks off changes no config).
 export async function fetchRepo(exec, path, on, allowed) {
   const repo = await openRepo(exec, path, on, allowed);
-  if (!repo.git) return { code: 1, skipped: Boolean(repo.blocked && !repo.blocked.error),
+  if (!repo.git) return { code: 1, repo, skipped: Boolean(repo.blocked && !repo.blocked.error),
     stderr: repo.blocked?.error ?? (repo.blocked ? "Not fetched: its git config runs commands. Open it to allow it." : "not a git repository") };
-  return exec("env", FETCH, { cwd: path, on });
+  return { ...await exec("env", FETCH, { cwd: path, on }), repo };
 }

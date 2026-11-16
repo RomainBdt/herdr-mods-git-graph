@@ -236,6 +236,7 @@ try {
     assert.equal(st.untrusted, true);
     const skipped = await fetchRepo(exec, repo, null, nobody);
     assert.equal(skipped.skipped, true); assert.notEqual(skipped.code, 0);
+    assert.deepEqual(await readRepo(exec, repo, null, false, nobody, skipped.repo), st, "a skipped row reads as not allowed");
     assert.equal((await executeAction({ type: "fetch" }, {}, ctxOf(repo, undefined), exec)).message, UNTRUSTED);
     assert.ok(!t.ran(), "ssh never runs before it's allowed");
     const read = await readFolder(exec, repo, null, opts, nobody), allowed = () => read.blocked.fingerprint;
@@ -262,6 +263,11 @@ try {
     assert.equal(out.code, 0, out.stderr);
     assert.equal(plain(repo, ["rev-parse", "origin/main"]).stdout.trim(), plain(remote, ["rev-parse", "HEAD"]).stdout.trim(), "it fetched");
     assert.ok(!t.ran(), "Fetch all runs no hook");
+    // The row's status right after reuses the fetch's check: no second config read.
+    calls.length = 0;
+    const st = await readRepo(exec, repo, null, false, nobody, out.repo);
+    assert.ok(!calls.some((c) => c.includes("config") || c.includes("--show-toplevel")), "checked once per fetch");
+    assert.deepEqual(st, await readRepo(exec, repo, null, false, nobody));
     assert.ok(FETCH.includes(NO_HOOKS) && FETCH.includes("--no-recurse-submodules"));
     commit(remote, "c.txt");
     plain(repo, ["fetch", "-q"]);
