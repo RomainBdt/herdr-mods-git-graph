@@ -9,6 +9,21 @@ import { openRepo } from "./trust.js";
 
 export const scopeOf = ({ all, remotes }) => `${all} ${remotes}`;
 
+// The folders open in Herdr's panes that warm() reads ahead, as [key, { cwd, on }]
+// in pane order: each once, never the shown one (context) or one already seen.
+// Never another machine's: no command runs there ahead of time, a remote folder
+// is read when it is shown.
+export function foldersToWarm(spaces, panes, context, seen) {
+  const machineOf = new Map(spaces.flatMap((s) => s.tabs.map((tab) => [tab.id, s.machine ?? null])));
+  const todo = new Map();
+  for (const p of panes) {
+    if (!p.cwd || machineOf.get(p.tab)) continue;
+    const where = { cwd: p.cwd, on: null };
+    todo.set(JSON.stringify(where), where);
+  }
+  return [...todo].filter(([key]) => key !== context && !seen.has(key));
+}
+
 // Everything the table shows for a folder, in one round of git calls: each
 // answers from any subfolder, and status names paths from the repository root.
 // status: false leaves the working tree unread (a folder read ahead).

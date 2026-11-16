@@ -5,6 +5,7 @@ import * as G from "../mods/git-graph/git.js";
 import { layoutLanes } from "../mods/git-graph/lanes.js";
 import * as R from "../mods/git-graph/repos.js";
 import { executeAction } from "../mods/git-graph/execute.js";
+import { foldersToWarm } from "../mods/git-graph/read.js";
 import { tmpdir } from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, symlinkSync } from "node:fs";
@@ -434,6 +435,18 @@ rmSync(base, { recursive: true, force: true });
   assert.equal(R.syncOf(undefined).kind, "loading"); assert.equal(R.syncOf({ error: "dubious ownership" }).kind, "error");
   rmSync(ws, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true });
   console.log("manygit ok");
+}
+
+// ---- Reading ahead (warm): only this machine's folders, each once, never the shown or a seen one
+{
+  const spaces = [{ machine: null, tabs: [{ id: "t1" }, { id: "t2" }] }, { machine: "server", tabs: [{ id: "t3" }] }, { tabs: [{ id: "t4" }] }];
+  const panes = [{ tab: "t1", cwd: "/a" }, { tab: "t3", cwd: "/remote" }, { tab: "t2", cwd: "/a" }, { tab: "t2", cwd: null },
+    { tab: "t4", cwd: "/b" }, { tab: "t1", cwd: "/shown" }, { tab: "t1", cwd: "/seen" }, { tab: "t9", cwd: "/c" }];
+  const key = (cwd) => JSON.stringify({ cwd, on: null });
+  const order = foldersToWarm(spaces, panes, key("/shown"), new Map([[key("/seen"), {}]]));
+  assert.deepEqual(order, ["/a", "/b", "/c"].map((cwd) => [key(cwd), { cwd, on: null }]), "another machine's folder is never read ahead");
+  assert.deepEqual(foldersToWarm([{ machine: "server", tabs: [{ id: "t" }] }], [{ tab: "t", cwd: "/x" }], null, new Map()), []);
+  console.log("warm ok");
 }
 
 // Keep the original CI entry point running the action-context regressions too.
